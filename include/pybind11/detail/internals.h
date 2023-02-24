@@ -159,17 +159,17 @@ struct internals {
     // std::type_index -> pybind11's type information
     type_map<type_info *> registered_types_cpp;
     // PyTypeObject* -> base type_info(s)
-    std::unordered_map<PyTypeObject *, std::vector<type_info *>> registered_types_py;
+    std::unordered_map<PyTypeObject *, luisa::vector<type_info *>> registered_types_py;
     std::unordered_multimap<const void *, instance *> registered_instances; // void * -> instance*
     std::unordered_set<std::pair<const PyObject *, const char *>, override_hash>
         inactive_override_cache;
-    type_map<std::vector<bool (*)(PyObject *, void *&)>> direct_conversions;
-    std::unordered_map<const PyObject *, std::vector<PyObject *>> patients;
+    type_map<luisa::vector<bool (*)(PyObject *, void *&)>> direct_conversions;
+    std::unordered_map<const PyObject *, luisa::vector<PyObject *>> patients;
     std::forward_list<ExceptionTranslator> registered_exception_translators;
     std::unordered_map<std::string, void *> shared_data; // Custom data to be shared across
                                                          // extensions
 #if PYBIND11_INTERNALS_VERSION == 4
-    std::vector<PyObject *> unused_loader_patient_stack_remove_at_v5;
+    luisa::vector<PyObject *> unused_loader_patient_stack_remove_at_v5;
 #endif
     std::forward_list<std::string> static_strings; // Stores the std::strings backing
                                                    // detail::c_str()
@@ -220,9 +220,9 @@ struct type_info {
     void *(*operator_new)(size_t);
     void (*init_instance)(instance *, const void *);
     void (*dealloc)(value_and_holder &v_h);
-    std::vector<PyObject *(*) (PyObject *, PyTypeObject *)> implicit_conversions;
-    std::vector<std::pair<const std::type_info *, void *(*) (void *)>> implicit_casts;
-    std::vector<bool (*)(PyObject *, void *&)> *direct_conversions;
+    luisa::vector<PyObject *(*) (PyObject *, PyTypeObject *)> implicit_conversions;
+    luisa::vector<std::pair<const std::type_info *, void *(*) (void *)>> implicit_casts;
+    luisa::vector<bool (*)(PyObject *, void *&)> *direct_conversions;
     buffer_info *(*get_buffer)(PyObject *, void *) = nullptr;
     void *get_buffer_data = nullptr;
     void *(*module_local_load)(PyObject *, const type_info *) = nullptr;
@@ -469,14 +469,12 @@ PYBIND11_NOINLINE internals &get_internals() {
 #if defined(WITH_THREAD)
 
         PyThreadState *tstate = PyThreadState_Get();
-        // NOLINTNEXTLINE(bugprone-assignment-in-if-condition)
         if (!PYBIND11_TLS_KEY_CREATE(internals_ptr->tstate)) {
             pybind11_fail("get_internals: could not successfully initialize the tstate TSS key!");
         }
         PYBIND11_TLS_REPLACE_VALUE(internals_ptr->tstate, tstate);
 
 #    if PYBIND11_INTERNALS_VERSION > 4
-        // NOLINTNEXTLINE(bugprone-assignment-in-if-condition)
         if (!PYBIND11_TLS_KEY_CREATE(internals_ptr->loader_life_support_tls_key)) {
             pybind11_fail("get_internals: could not successfully initialize the "
                           "loader_life_support TSS key!");
@@ -516,7 +514,6 @@ struct local_internals {
     struct shared_loader_life_support_data {
         PYBIND11_TLS_KEY_INIT(loader_life_support_tls_key)
         shared_loader_life_support_data() {
-            // NOLINTNEXTLINE(bugprone-assignment-in-if-condition)
             if (!PYBIND11_TLS_KEY_CREATE(loader_life_support_tls_key)) {
                 pybind11_fail("local_internals: could not successfully initialize the "
                               "loader_life_support TLS key!");

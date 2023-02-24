@@ -19,9 +19,7 @@
 PYBIND11_WARNING_PUSH
 PYBIND11_WARNING_DISABLE_MSVC(5054) // https://github.com/pybind/pybind11/pull/3741
 //       C5054: operator '&': deprecated between enumerations of different types
-#if defined(__MINGW32__)
 PYBIND11_WARNING_DISABLE_GCC("-Wmaybe-uninitialized")
-#endif
 
 #include <Eigen/Core>
 #include <Eigen/SparseCore>

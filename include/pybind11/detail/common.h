@@ -10,12 +10,12 @@
 #pragma once
 
 #define PYBIND11_VERSION_MAJOR 2
-#define PYBIND11_VERSION_MINOR 11
-#define PYBIND11_VERSION_PATCH 0.dev1
+#define PYBIND11_VERSION_MINOR 10
+#define PYBIND11_VERSION_PATCH 2
 
 // Similar to Python's convention: https://docs.python.org/3/c-api/apiabiversion.html
 // Additional convention: 0xD = dev
-#define PYBIND11_VERSION_HEX 0x020B00D1
+#define PYBIND11_VERSION_HEX 0x020A0200
 
 // Define some generic pybind11 helper macros for warning management.
 //
@@ -244,7 +244,7 @@ PYBIND11_WARNING_DISABLE_MSVC(4505)
                                  !__has_include(<optional>))
 #        define PYBIND11_HAS_EXP_OPTIONAL 1
 #    endif
-// std::variant
+// luisa::variant
 #    if defined(PYBIND11_CPP17) && __has_include(<variant>)
 #        define PYBIND11_HAS_VARIANT 1
 #    endif
@@ -436,7 +436,7 @@ PYBIND11_WARNING_POP
 
 /** \rst
     This macro creates the entry point that will be invoked when the Python interpreter
-    imports an extension module. The module name is given as the first argument and it
+    imports an extension module. The module name is given as the fist argument and it
     should not be in quotes. The second macro argument defines a variable of type
     `py::module_` which can be used to initialize the module.
 
@@ -1120,7 +1120,7 @@ PYBIND11_NAMESPACE_BEGIN(detail)
 // arithmetic type (if T is arithmetic), or explicitly constructible from an iterator pair.
 template <typename T>
 class any_container {
-    std::vector<T> v;
+    luisa::vector<T> v;
 
 public:
     any_container() = default;
@@ -1145,19 +1145,19 @@ public:
 
     // Avoid copying if given an rvalue vector of the correct type.
     // NOLINTNEXTLINE(google-explicit-constructor)
-    any_container(std::vector<T> &&v) : v(std::move(v)) {}
+    any_container(luisa::vector<T> &&v) : v(std::move(v)) {}
 
     // Moves the vector out of an rvalue any_container
     // NOLINTNEXTLINE(google-explicit-constructor)
-    operator std::vector<T> &&() && { return std::move(v); }
+    operator luisa::vector<T> &&() && { return std::move(v); }
 
     // Dereferencing obtains a reference to the underlying vector
-    std::vector<T> &operator*() { return v; }
-    const std::vector<T> &operator*() const { return v; }
+    luisa::vector<T> &operator*() { return v; }
+    const luisa::vector<T> &operator*() const { return v; }
 
     // -> lets you call methods on the underlying vector
-    std::vector<T> *operator->() { return &v; }
-    const std::vector<T> *operator->() const { return &v; }
+    luisa::vector<T> *operator->() { return &v; }
+    const luisa::vector<T> *operator->() const { return &v; }
 };
 
 // Forward-declaration; see detail/class.h
@@ -1225,9 +1225,8 @@ constexpr
 #endif
 
 // Pybind offers detailed error messages by default for all builts that are debug (through the
-// negation of NDEBUG). This can also be manually enabled by users, for any builds, through
-// defining PYBIND11_DETAILED_ERROR_MESSAGES. This information is primarily useful for those
-// who are writing (as opposed to merely using) libraries that use pybind11.
+// negation of ndebug). This can also be manually enabled by users, for any builds, through
+// defining PYBIND11_DETAILED_ERROR_MESSAGES.
 #if !defined(PYBIND11_DETAILED_ERROR_MESSAGES) && !defined(NDEBUG)
 #    define PYBIND11_DETAILED_ERROR_MESSAGES
 #endif

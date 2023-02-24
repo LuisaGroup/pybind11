@@ -303,7 +303,7 @@ void vector_modifiers(
         "Delete list elements using a slice object");
 }
 
-// If the type has an operator[] that doesn't return a reference (most notably std::vector<bool>),
+// If the type has an operator[] that doesn't return a reference (most notably luisa::vector<bool>),
 // we have to access by copying; otherwise we return by reference.
 template <typename Vector>
 using vector_needs_copy
@@ -347,7 +347,7 @@ void vector_accessor(enable_if_t<!vector_needs_copy<Vector>::value, Class_> &cl)
     );
 }
 
-// The case for special objects, like std::vector<bool>, that have to be returned-by-copy:
+// The case for special objects, like luisa::vector<bool>, that have to be returned-by-copy:
 template <typename Vector, typename Class_>
 void vector_accessor(enable_if_t<vector_needs_copy<Vector>::value, Class_> &cl) {
     using T = typename Vector::value_type;
@@ -355,17 +355,13 @@ void vector_accessor(enable_if_t<vector_needs_copy<Vector>::value, Class_> &cl) 
     using DiffType = typename Vector::difference_type;
     using ItType = typename Vector::iterator;
     cl.def("__getitem__", [](const Vector &v, DiffType i) -> T {
-        if (i < 0) {
-            i += v.size();
-            if (i < 0) {
-                throw index_error();
-            }
-        }
-        auto i_st = static_cast<SizeType>(i);
-        if (i_st >= v.size()) {
+        if (i < 0 && (i += v.size()) < 0) {
             throw index_error();
         }
-        return v[i_st];
+        if ((SizeType) i >= v.size()) {
+            throw index_error();
+        }
+        return v[(SizeType) i];
     });
 
     cl.def(
@@ -401,7 +397,7 @@ auto vector_if_insertion_operator(Class_ &cl, std::string const &name)
 }
 
 // Provide the buffer interface for vectors if we have data() and we have a format for it
-// GCC seems to have "void std::vector<bool>::data()" - doing SFINAE on the existence of data()
+// GCC seems to have "void luisa::vector<bool>::data()" - doing SFINAE on the existence of data()
 // is insufficient, we need to check it returns an appropriate pointer
 template <typename Vector, typename = void>
 struct vector_has_data_and_format : std::false_type {};
@@ -484,7 +480,7 @@ void vector_buffer(Class_ &cl) {
 PYBIND11_NAMESPACE_END(detail)
 
 //
-// std::vector
+// luisa::vector
 //
 template <typename Vector, typename holder_type = std::unique_ptr<Vector>, typename... Args>
 class_<Vector, holder_type> bind_vector(handle scope, std::string const &name, Args &&...args) {

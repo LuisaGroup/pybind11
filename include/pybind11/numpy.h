@@ -647,7 +647,7 @@ private:
                 : name{std::move(name)}, format{std::move(format)}, offset{std::move(offset)} {};
         };
         auto field_dict = attr("fields").cast<dict>();
-        std::vector<field_descr> field_descriptors;
+        luisa::vector<field_descr> field_descriptors;
         field_descriptors.reserve(field_dict.size());
 
         for (auto field : field_dict.attr("items")()) {
@@ -1121,10 +1121,10 @@ public:
 
     /**
      * Returns a proxy object that provides const access to the array's data without bounds or
-     * dimensionality checking.  Unlike `mutable_unchecked()`, this does not require that the
-     * underlying array have the `writable` flag.  Use with care: the array must not be destroyed
-     * or reshaped for the duration of the returned object, and the caller must take care not to
-     * access invalid dimensions or dimension indices.
+     * dimensionality checking.  Unlike `unchecked()`, this does not require that the underlying
+     * array have the `writable` flag.  Use with care: the array must not be destroyed or reshaped
+     * for the duration of the returned object, and the caller must take care not to access invalid
+     * dimensions or dimension indices.
      */
     template <ssize_t Dims = -1>
     detail::unchecked_reference<T, Dims> unchecked() const & {
@@ -1354,7 +1354,7 @@ PYBIND11_NOINLINE void register_structured_dtype(any_container<field_descriptor>
 
     // Use ordered fields because order matters as of NumPy 1.14:
     // https://docs.scipy.org/doc/numpy/release.html#multiple-field-indexing-assignment-of-structured-arrays
-    std::vector<field_descriptor> ordered_fields(std::move(fields));
+    luisa::vector<field_descriptor> ordered_fields(std::move(fields));
     std::sort(
         ordered_fields.begin(),
         ordered_fields.end(),
@@ -1508,7 +1508,7 @@ private:
 
 #    define PYBIND11_NUMPY_DTYPE(Type, ...)                                                       \
         ::pybind11::detail::npy_format_descriptor<Type>::register_dtype(                          \
-            ::std::vector<::pybind11::detail::field_descriptor>{                                  \
+            ::luisa::vector<::pybind11::detail::field_descriptor>{                                  \
                 PYBIND11_MAP_LIST(PYBIND11_FIELD_DESCRIPTOR, Type, __VA_ARGS__)})
 
 #    if defined(_MSC_VER) && !defined(__clang__)
@@ -1530,14 +1530,14 @@ private:
 
 #    define PYBIND11_NUMPY_DTYPE_EX(Type, ...)                                                    \
         ::pybind11::detail::npy_format_descriptor<Type>::register_dtype(                          \
-            ::std::vector<::pybind11::detail::field_descriptor>{                                  \
+            ::luisa::vector<::pybind11::detail::field_descriptor>{                                  \
                 PYBIND11_MAP2_LIST(PYBIND11_FIELD_DESCRIPTOR_EX, Type, __VA_ARGS__)})
 
 #endif // __CLION_IDE__
 
 class common_iterator {
 public:
-    using container_type = std::vector<ssize_t>;
+    using container_type = luisa::vector<ssize_t>;
     using value_type = container_type::value_type;
     using size_type = container_type::size_type;
 
@@ -1565,7 +1565,7 @@ private:
 template <size_t N>
 class multi_array_iterator {
 public:
-    using container_type = std::vector<ssize_t>;
+    using container_type = luisa::vector<ssize_t>;
 
     multi_array_iterator(const std::array<buffer_info, N> &buffers, const container_type &shape)
         : m_shape(shape.size()), m_index(shape.size(), 0), m_common_iterator() {
@@ -1646,7 +1646,7 @@ enum class broadcast_trivial { non_trivial, c_trivial, f_trivial };
 // (`f_trivial`) storage buffer; returns `non_trivial` otherwise.
 template <size_t N>
 broadcast_trivial
-broadcast(const std::array<buffer_info, N> &buffers, ssize_t &ndim, std::vector<ssize_t> &shape) {
+broadcast(const std::array<buffer_info, N> &buffers, ssize_t &ndim, luisa::vector<ssize_t> &shape) {
     ndim = std::accumulate(
         buffers.begin(), buffers.end(), ssize_t(0), [](ssize_t res, const buffer_info &buf) {
             return std::max(res, buf.ndim);
@@ -1755,7 +1755,7 @@ template <typename Func, typename Return, typename... Args>
 struct vectorize_returned_array {
     using Type = array_t<Return>;
 
-    static Type create(broadcast_trivial trivial, const std::vector<ssize_t> &shape) {
+    static Type create(broadcast_trivial trivial, const luisa::vector<ssize_t> &shape) {
         if (trivial == broadcast_trivial::f_trivial) {
             return array_t<Return, array::f_style>(shape);
         }
@@ -1774,7 +1774,7 @@ template <typename Func, typename... Args>
 struct vectorize_returned_array<Func, void, Args...> {
     using Type = none;
 
-    static Type create(broadcast_trivial, const std::vector<ssize_t> &) { return none(); }
+    static Type create(broadcast_trivial, const luisa::vector<ssize_t> &) { return none(); }
 
     static void *mutable_data(Type &) { return nullptr; }
 
@@ -1851,7 +1851,7 @@ private:
 
         /* Determine dimensions parameters of output array */
         ssize_t nd = 0;
-        std::vector<ssize_t> shape(0);
+        luisa::vector<ssize_t> shape(0);
         auto trivial = broadcast(buffers, nd, shape);
         auto ndim = (size_t) nd;
 
@@ -1920,7 +1920,7 @@ private:
                          std::array<void *, N> &params,
                          Return *out,
                          size_t size,
-                         const std::vector<ssize_t> &output_shape,
+                         const luisa::vector<ssize_t> &output_shape,
                          index_sequence<Index...>,
                          index_sequence<VIndex...>,
                          index_sequence<BIndex...>) {

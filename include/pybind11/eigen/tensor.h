@@ -17,9 +17,7 @@ static_assert(__GNUC__ > 5, "Eigen Tensor support in pybind11 requires GCC > 5.0
 PYBIND11_WARNING_PUSH
 PYBIND11_WARNING_DISABLE_MSVC(4554)
 PYBIND11_WARNING_DISABLE_MSVC(4127)
-#if defined(__MINGW32__)
 PYBIND11_WARNING_DISABLE_GCC("-Wmaybe-uninitialized")
-#endif
 
 #include <unsupported/Eigen/CXX11/Tensor>
 
@@ -139,8 +137,8 @@ PYBIND11_WARNING_PUSH
 PYBIND11_WARNING_DISABLE_GCC("-Wtype-limits")
 
 template <typename T, int size>
-std::vector<T> convert_dsizes_to_vector(const Eigen::DSizes<T, size> &arr) {
-    std::vector<T> result(size);
+luisa::vector<T> convert_dsizes_to_vector(const Eigen::DSizes<T, size> &arr) {
+    luisa::vector<T> result(size);
 
     for (size_t i = 0; i < size; i++) {
         result[i] = arr[i];
@@ -178,7 +176,7 @@ struct type_caster<Type, typename eigen_tensor_helper<Type>::ValidType> {
                 return false;
             }
 
-            if (!temp.dtype().is(dtype::of<typename Type::Scalar>())) {
+            if (!convert && !temp.dtype().is(dtype::of<typename Type::Scalar>())) {
                 return false;
             }
         }

@@ -103,8 +103,8 @@ inline std::pair<decltype(internals::registered_types_py)::iterator, bool>
 all_type_info_get_cache(PyTypeObject *type);
 
 // Populates a just-created cache entry.
-PYBIND11_NOINLINE void all_type_info_populate(PyTypeObject *t, std::vector<type_info *> &bases) {
-    std::vector<PyTypeObject *> check;
+PYBIND11_NOINLINE void all_type_info_populate(PyTypeObject *t, luisa::vector<type_info *> &bases) {
+    luisa::vector<PyTypeObject *> check;
     for (handle parent : reinterpret_borrow<tuple>(t->tp_bases)) {
         check.push_back((PyTypeObject *) parent.ptr());
     }
@@ -166,7 +166,7 @@ PYBIND11_NOINLINE void all_type_info_populate(PyTypeObject *t, std::vector<type_
  *
  * The value is cached for the lifetime of the Python type.
  */
-inline const std::vector<detail::type_info *> &all_type_info(PyTypeObject *type) {
+inline const luisa::vector<detail::type_info *> &all_type_info(PyTypeObject *type) {
     auto ins = all_type_info_get_cache(type);
     if (ins.second) {
         // New cache entry: populate it
@@ -315,7 +315,7 @@ struct value_and_holder {
 struct values_and_holders {
 private:
     instance *inst;
-    using type_vec = std::vector<detail::type_info *>;
+    using type_vec = luisa::vector<detail::type_info *>;
     const type_vec &tinfo;
 
 public:
@@ -822,7 +822,7 @@ using movable_cast_op_type
                                   typename std::add_rvalue_reference<intrinsic_t<T>>::type,
                                   typename std::add_lvalue_reference<intrinsic_t<T>>::type>>;
 
-// std::is_copy_constructible isn't quite enough: it lets std::vector<T> (and similar) through when
+// std::is_copy_constructible isn't quite enough: it lets luisa::vector<T> (and similar) through when
 // T is non-copyable, but code containing such a copy constructor fails to actually compile.
 template <typename T, typename SFINAE = void>
 struct is_copy_constructible : std::is_copy_constructible<T> {};

@@ -10,6 +10,9 @@
 
 #pragma once
 
+#include <core/stl/vector.h>
+#include <core/stl/functional.h>
+#include <core/stl/variant.h>
 #include "detail/class.h"
 #include "detail/init.h"
 #include "attr.h"
@@ -328,7 +331,7 @@ protected:
         void release() { strings.clear(); }
 
     private:
-        std::vector<char *> strings;
+        luisa::vector<char *> strings;
     };
 
     /// Register a function call with Python (generic non-templated code goes here)
@@ -709,7 +712,7 @@ protected:
             // in the second, we allow conversion (except for arguments with an explicit
             // py::arg().noconvert()).  This lets us prefer calls without conversion, with
             // conversion as a fallback.
-            std::vector<function_call> second_pass;
+            luisa::vector<function_call> second_pass;
 
             // However, if there are no overloads, we can just skip the no-convert pass entirely
             const bool overloaded = it != nullptr && it->next != nullptr;
@@ -924,7 +927,7 @@ protected:
                 }
 #endif
 
-                std::vector<bool> second_pass_convert;
+                luisa::vector<bool> second_pass_convert;
                 if (overloaded) {
                     // We're in the first no-convert pass, so swap out the conversion flags for a
                     // set of all-false flags.  If the call fails, we'll swap the flags back in for
@@ -2268,7 +2271,7 @@ all_type_info_get_cache(PyTypeObject *type) {
 #ifdef __cpp_lib_unordered_map_try_emplace
                    .try_emplace(type);
 #else
-                   .emplace(type, std::vector<detail::type_info *>());
+                   .emplace(type, luisa::vector<detail::type_info *>());
 #endif
     if (res.second) {
         // New cache entry created; set up a weak reference to automatically remove it if the type

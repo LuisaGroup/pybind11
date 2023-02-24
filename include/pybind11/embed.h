@@ -120,7 +120,7 @@ inline void initialize_interpreter_pre_pyconfig(bool init_signal_handlers,
     auto argv_size = static_cast<size_t>(argc);
     // SetArgv* on python 3 takes wchar_t, so we have to convert.
     std::unique_ptr<wchar_t *[]> widened_argv(new wchar_t *[argv_size]);
-    std::vector<std::unique_ptr<wchar_t[], detail::wide_char_arg_deleter>> widened_argv_entries;
+    luisa::vector<std::unique_ptr<wchar_t[], detail::wide_char_arg_deleter>> widened_argv_entries;
     widened_argv_entries.reserve(argv_size);
     for (size_t ii = 0; ii < argv_size; ++ii) {
         widened_argv_entries.emplace_back(detail::widen_chars(safe_argv[ii]));
@@ -198,10 +198,9 @@ inline void initialize_interpreter(bool init_signal_handlers = true,
         init_signal_handlers, argc, argv, add_program_dir_to_path);
 #else
     PyConfig config;
-    PyConfig_InitPythonConfig(&config);
-    // See PR #4473 for background
-    config.parse_argv = 0;
-
+    PyConfig_InitIsolatedConfig(&config);
+    config.isolated = 0;
+    config.use_environment = 1;
     config.install_signal_handlers = init_signal_handlers ? 1 : 0;
     initialize_interpreter(&config, argc, argv, add_program_dir_to_path);
 #endif

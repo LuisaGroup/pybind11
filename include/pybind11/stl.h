@@ -211,8 +211,8 @@ public:
     PYBIND11_TYPE_CASTER(Type, const_name("List[") + value_conv::name + const_name("]"));
 };
 
-template <typename Type, typename Alloc>
-struct type_caster<std::vector<Type, Alloc>> : list_caster<std::vector<Type, Alloc>, Type> {};
+template <typename Type>
+struct type_caster<luisa::vector<Type>> : list_caster<luisa::vector<Type>, Type> {};
 
 template <typename Type, typename Alloc>
 struct type_caster<std::deque<Type, Alloc>> : list_caster<std::deque<Type, Alloc>, Type> {};
@@ -316,7 +316,6 @@ struct optional_caster {
         if (!std::is_lvalue_reference<T>::value) {
             policy = return_value_policy_override<Value>::policy(policy);
         }
-        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         return value_conv::cast(*std::forward<T>(src), policy, parent);
     }
 
@@ -370,7 +369,7 @@ struct variant_caster_visitor {
     }
 };
 
-/// Helper class which abstracts away variant's `visit` function. `std::variant` and similar
+/// Helper class which abstracts away variant's `visit` function. `luisa::variant` and similar
 /// `namespace::variant` types which provide a `namespace::visit()` function are handled here
 /// automatically using argument-dependent lookup. Users can provide specializations for other
 /// variant-like classes, e.g. `boost::variant` and `boost::apply_visitor`.
@@ -427,7 +426,7 @@ struct variant_caster<V<Ts...>> {
 
 #if defined(PYBIND11_HAS_VARIANT)
 template <typename... Ts>
-struct type_caster<std::variant<Ts...>> : variant_caster<std::variant<Ts...>> {};
+struct type_caster<luisa::variant<Ts...>> : variant_caster<luisa::variant<Ts...>> {};
 
 template <>
 struct type_caster<std::monostate> : public void_caster<std::monostate> {};

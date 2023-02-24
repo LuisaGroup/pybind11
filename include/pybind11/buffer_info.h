@@ -16,9 +16,9 @@ PYBIND11_NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
 PYBIND11_NAMESPACE_BEGIN(detail)
 
 // Default, C-style strides
-inline std::vector<ssize_t> c_strides(const std::vector<ssize_t> &shape, ssize_t itemsize) {
+inline luisa::vector<ssize_t> c_strides(const luisa::vector<ssize_t> &shape, ssize_t itemsize) {
     auto ndim = shape.size();
-    std::vector<ssize_t> strides(ndim, itemsize);
+    luisa::vector<ssize_t> strides(ndim, itemsize);
     if (ndim > 0) {
         for (size_t i = ndim - 1; i > 0; --i) {
             strides[i - 1] = strides[i] * shape[i];
@@ -28,9 +28,9 @@ inline std::vector<ssize_t> c_strides(const std::vector<ssize_t> &shape, ssize_t
 }
 
 // F-style strides; default when constructing an array_t with `ExtraFlags & f_style`
-inline std::vector<ssize_t> f_strides(const std::vector<ssize_t> &shape, ssize_t itemsize) {
+inline luisa::vector<ssize_t> f_strides(const luisa::vector<ssize_t> &shape, ssize_t itemsize) {
     auto ndim = shape.size();
-    std::vector<ssize_t> strides(ndim, itemsize);
+    luisa::vector<ssize_t> strides(ndim, itemsize);
     for (size_t i = 1; i < ndim; ++i) {
         strides[i] = strides[i - 1] * shape[i - 1];
     }
@@ -47,8 +47,8 @@ struct buffer_info {
     std::string format;           // For homogeneous buffers, this should be set to
                                   // format_descriptor<T>::format()
     ssize_t ndim = 0;             // Number of dimensions
-    std::vector<ssize_t> shape;   // Shape of the tensor (1 entry per dimension)
-    std::vector<ssize_t> strides; // Number of bytes between adjacent entries
+    luisa::vector<ssize_t> shape;   // Shape of the tensor (1 entry per dimension)
+    luisa::vector<ssize_t> strides; // Number of bytes between adjacent entries
                                   // (for each per dimension)
     bool readonly = false;        // flag to indicate if the underlying storage may be written to
 
@@ -112,7 +112,7 @@ struct buffer_info {
              * ignore this flag and return a view with NULL strides.
              * When strides are NULL, build them manually.  */
             view->strides
-                ? std::vector<ssize_t>(view->strides, view->strides + view->ndim)
+                ? luisa::vector<ssize_t>(view->strides, view->strides + view->ndim)
                 : detail::c_strides({view->shape, view->shape + view->ndim}, view->itemsize),
             (view->readonly != 0)) {
         // NOLINTNEXTLINE(cppcoreguidelines-prefer-member-initializer)

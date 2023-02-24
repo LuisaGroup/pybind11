@@ -99,7 +99,7 @@ struct metaclass {
 /// implementation of `make_new_python_type` in `detail/classes.h` to understand
 /// the context in which the callback will be run.
 struct custom_type_setup {
-    using callback = std::function<void(PyHeapTypeObject *heap_type)>;
+    using callback = luisa::function<void(PyHeapTypeObject *heap_type)>;
 
     explicit custom_type_setup(callback value) : value(std::move(value)) {}
 
@@ -201,7 +201,7 @@ struct function_record {
     char *signature = nullptr;
 
     /// List of registered keyword arguments
-    std::vector<argument_record> args;
+    luisa::vector<argument_record> args;
 
     /// Pointer to lambda function which converts arguments and performs the actual call
     handle (*impl)(function_call &) = nullptr;
@@ -399,7 +399,7 @@ struct process_attribute<doc> : process_attribute_default<doc> {
 template <>
 struct process_attribute<const char *> : process_attribute_default<const char *> {
     static void init(const char *d, function_record *r) { r->doc = const_cast<char *>(d); }
-    static void init(const char *d, type_record *r) { r->doc = d; }
+    static void init(const char *d, type_record *r) { r->doc = const_cast<char *>(d); }
 };
 template <>
 struct process_attribute<char *> : process_attribute<const char *> {};
