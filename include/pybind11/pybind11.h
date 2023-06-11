@@ -10,9 +10,9 @@
 
 #pragma once
 
-#include <core/stl/vector.h>
-#include <core/stl/functional.h>
-#include <core/stl/variant.h>
+#include <luisa/core/stl/vector.h>
+#include <luisa/core/stl/functional.h>
+#include <luisa/core/stl/variant.h>
 #include "detail/class.h"
 #include "detail/init.h"
 #include "attr.h"
