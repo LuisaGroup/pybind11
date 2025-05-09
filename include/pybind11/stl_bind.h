@@ -566,7 +566,7 @@ class_<Vector, holder_type> bind_vector(handle scope, std::string const &name, A
 }
 
 //
-// std::map, std::unordered_map
+// std::map, pybind::unordered_map
 //
 
 PYBIND11_NAMESPACE_BEGIN(detail)

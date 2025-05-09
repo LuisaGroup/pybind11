@@ -414,7 +414,7 @@ inline void add_patient(PyObject *nurse, PyObject *patient) {
 
 inline void clear_patients(PyObject *self) {
     auto *instance = reinterpret_cast<detail::instance *>(self);
-    std::vector<PyObject *> patients;
+    luisa::vector<PyObject *> patients;
 
     with_internals([&](internals &internals) {
         auto pos = internals.patients.find(self);

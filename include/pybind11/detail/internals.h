@@ -116,7 +116,7 @@ struct type_equal_to {
 #endif
 
 template <typename value_type>
-using type_map = std::unordered_map<std::type_index, value_type, type_hash, type_equal_to>;
+using type_map = pybind::unordered_map<std::type_index, value_type, type_hash, type_equal_to>;
 
 struct override_hash {
     inline size_t operator()(const std::pair<const PyObject *, const char *> &v) const {
@@ -126,7 +126,7 @@ struct override_hash {
     }
 };
 
-using instance_map = std::unordered_multimap<const void *, instance *>;
+using instance_map = pybind::unordered_multimap<const void *, instance *>;
 
 #ifdef Py_GIL_DISABLED
 // Wrapper around PyMutex to provide BasicLockable semantics
@@ -162,19 +162,19 @@ struct internals {
     // std::type_index -> pybind11's type information
     type_map<type_info *> registered_types_cpp;
     // PyTypeObject* -> base type_info(s)
-    std::unordered_map<PyTypeObject *, luisa::vector<type_info *>> registered_types_py;
+    pybind::unordered_map<PyTypeObject *, luisa::vector<type_info *>> registered_types_py;
 #ifdef Py_GIL_DISABLED
     std::unique_ptr<instance_map_shard[]> instance_shards; // void * -> instance*
     size_t instance_shards_mask;
 #else
     instance_map registered_instances; // void * -> instance*
 #endif
-    std::unordered_set<std::pair<const PyObject *, const char *>, override_hash>
+    pybind::unordered_set<std::pair<const PyObject *, const char *>, override_hash>
         inactive_override_cache;
     type_map<luisa::vector<bool (*)(PyObject *, void *&)>> direct_conversions;
-    std::unordered_map<const PyObject *, luisa::vector<PyObject *>> patients;
+    pybind::unordered_map<const PyObject *, luisa::vector<PyObject *>> patients;
     std::forward_list<ExceptionTranslator> registered_exception_translators;
-    std::unordered_map<std::string, void *> shared_data; // Custom data to be shared across
+    pybind::unordered_map<std::string, void *> shared_data; // Custom data to be shared across
                                                          // extensions
     std::forward_list<std::string> static_strings;       // Stores the std::strings backing
                                                          // detail::c_str()

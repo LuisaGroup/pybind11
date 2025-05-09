@@ -43,7 +43,7 @@ PYBIND11_NAMESPACE_BEGIN(detail)
 class loader_life_support {
 private:
     loader_life_support *parent = nullptr;
-    std::unordered_set<PyObject *> keep_alive;
+    pybind::unordered_set<PyObject *> keep_alive;
 
     // Store stack pointer in thread-local storage.
     static PYBIND11_TLS_KEY_REF get_stack_tls_key() {

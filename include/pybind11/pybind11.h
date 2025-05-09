@@ -12,6 +12,28 @@
 #include <luisa/core/stl/vector.h>
 #include <luisa/core/stl/functional.h>
 #include <luisa/core/stl/variant.h>
+#include <unordered_map>
+#include <unordered_set>
+namespace pybind {
+template<typename K, typename V,
+        typename Hash = std::hash<K>,
+        typename Eq = std::equal_to<>,
+        typename Alloc = luisa::allocator<std::pair<const K, V>>>
+using unordered_map = std::unordered_map<K, V, Hash, Eq, Alloc>;
+template<typename K, typename V,
+        typename Hash = std::hash<K>,
+        typename Eq = std::equal_to<>,
+        typename Alloc = luisa::allocator<std::pair<const K, V>>>
+using unordered_multimap = std::unordered_multimap<K, V, Hash, Eq, Alloc>;
+
+template<typename K,
+         typename Hash = std::hash<K>,
+         typename Eq = std::equal_to<>,
+         typename Alloc = luisa::allocator<K>>
+using unordered_set = std::unordered_set<K, Hash, Eq, Alloc>;
+}
+
+
 #include "detail/class.h"
 #include "detail/dynamic_raw_ptr_cast_if_possible.h"
 #include "detail/exception_translation.h"
