@@ -6,6 +6,8 @@
     All rights reserved. Use of this source code is governed by a
     BSD-style license that can be found in the LICENSE file.
 */
+#include <pybind11/gil_safe_call_once.h>
+
 #include "test_exceptions.h"
 
 #include "local_bindings.h"
@@ -109,12 +111,24 @@ struct PythonAlreadySetInDestructor {
     py::str s;
 };
 
+struct CustomData {
+    explicit CustomData(const std::string &a) : a(a) {}
+    std::string a;
+};
+
+struct MyException7 {
+    explicit MyException7(const CustomData &message) : message(message) {}
+    CustomData message;
+};
+
 TEST_SUBMODULE(exceptions, m) {
     m.def("throw_std_exception",
           []() { throw std::runtime_error("This exception was intentionally thrown."); });
 
     // PLEASE KEEP IN SYNC with docs/advanced/exceptions.rst
-    static py::handle ex = py::exception<MyException>(m, "MyException").release();
+    PYBIND11_CONSTINIT static py::gil_safe_call_once_and_store<py::object> ex_storage;
+    ex_storage.call_once_and_store_result(
+        [&]() { return py::exception<MyException>(m, "MyException"); });
     py::register_exception_translator([](std::exception_ptr p) {
         try {
             if (p) {
@@ -122,7 +136,7 @@ TEST_SUBMODULE(exceptions, m) {
             }
         } catch (const MyException &e) {
             // Set MyException as the active python error
-            py::set_error(ex, e.what());
+            py::set_error(ex_storage.get_stored(), e.what());
         }
     });
 
@@ -377,5 +391,37 @@ TEST_SUBMODULE(exceptions, m) {
     m.def("test_fn_cast_int", [](const py::function &fn) {
         // function returns None instead of int, should give a useful error message
         fn().cast<int>();
+    });
+
+    // m.def("pass_exception_void", [](const py::exception<void>&) {}); // Does not compile.
+    m.def("return_exception_void", []() { return py::exception<void>(); });
+
+    m.def("throws7", []() {
+        auto data = CustomData("abc");
+        throw MyException7(data);
+    });
+
+    py::class_<CustomData>(m, "CustomData", py::module_local())
+        .def(py::init<const std::string &>())
+        .def_readwrite("a", &CustomData::a);
+
+    PYBIND11_CONSTINIT static py::gil_safe_call_once_and_store<py::object>
+        PythonMyException7_storage;
+    PythonMyException7_storage.call_once_and_store_result([&]() {
+        auto mod = py::module_::import("custom_exceptions");
+        py::object obj = mod.attr("PythonMyException7");
+        return obj;
+    });
+
+    py::register_local_exception_translator([](std::exception_ptr p) {
+        try {
+            if (p) {
+                std::rethrow_exception(p);
+            }
+        } catch (const MyException7 &e) {
+            auto exc_type = PythonMyException7_storage.get_stored();
+            py::object exc_inst = exc_type(e.message);
+            PyErr_SetObject(PyExc_Exception, exc_inst.ptr());
+        }
     });
 }
