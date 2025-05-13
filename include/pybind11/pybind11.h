@@ -9,6 +9,7 @@
 */
 
 #pragma once
+#include <luisa/core/stl/memory.h>
 #include <luisa/core/stl/vector.h>
 #include <luisa/core/stl/functional.h>
 #include <luisa/core/stl/variant.h>
