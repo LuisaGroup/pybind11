@@ -45,7 +45,7 @@ Normally, the binding code for these classes would look as follows:
 
 .. code-block:: cpp
 
-    PYBIND11_MODULE(example, m) {
+    PYBIND11_MODULE(example, m, py::mod_gil_not_used()) {
         py::class_<Animal>(m, "Animal")
             .def("go", &Animal::go);
 
@@ -64,7 +64,7 @@ helper class that is defined as follows:
 
 .. code-block:: cpp
 
-    class PyAnimal : public Animal, py::trampoline_self_life_support {
+    class PyAnimal : public Animal, public py::trampoline_self_life_support {
     public:
         /* Inherit the constructors */
         using Animal::Animal;
@@ -112,7 +112,7 @@ The binding code also needs a few minor adaptations (highlighted):
 .. code-block:: cpp
     :emphasize-lines: 2,3
 
-    PYBIND11_MODULE(example, m) {
+    PYBIND11_MODULE(example, m, py::mod_gil_not_used()) {
         py::class_<Animal, PyAnimal /* <--- trampoline */, py::smart_holder>(m, "Animal")
             .def(py::init<>())
             .def("go", &Animal::go);
@@ -262,13 +262,13 @@ override the ``name()`` method):
 
 .. code-block:: cpp
 
-    class PyAnimal : public Animal, py::trampoline_self_life_support {
+    class PyAnimal : public Animal, public py::trampoline_self_life_support {
     public:
         using Animal::Animal; // Inherit constructors
         std::string go(int n_times) override { PYBIND11_OVERRIDE_PURE(std::string, Animal, go, n_times); }
         std::string name() override { PYBIND11_OVERRIDE(std::string, Animal, name, ); }
     };
-    class PyDog : public Dog, py::trampoline_self_life_support {
+    class PyDog : public Dog, public py::trampoline_self_life_support {
     public:
         using Dog::Dog; // Inherit constructors
         std::string go(int n_times) override { PYBIND11_OVERRIDE(std::string, Dog, go, n_times); }
@@ -290,7 +290,7 @@ declare or override any virtual methods itself:
 .. code-block:: cpp
 
     class Husky : public Dog {};
-    class PyHusky : public Husky, py::trampoline_self_life_support {
+    class PyHusky : public Husky, public py::trampoline_self_life_support {
     public:
         using Husky::Husky; // Inherit constructors
         std::string go(int n_times) override { PYBIND11_OVERRIDE_PURE(std::string, Husky, go, n_times); }
@@ -306,14 +306,14 @@ follows:
 .. code-block:: cpp
 
     template <class AnimalBase = Animal>
-    class PyAnimal : public AnimalBase, py::trampoline_self_life_support {
+    class PyAnimal : public AnimalBase, public py::trampoline_self_life_support {
     public:
         using AnimalBase::AnimalBase; // Inherit constructors
         std::string go(int n_times) override { PYBIND11_OVERRIDE_PURE(std::string, AnimalBase, go, n_times); }
         std::string name() override { PYBIND11_OVERRIDE(std::string, AnimalBase, name, ); }
     };
     template <class DogBase = Dog>
-    class PyDog : public PyAnimal<DogBase>, py::trampoline_self_life_support {
+    class PyDog : public PyAnimal<DogBase>, public py::trampoline_self_life_support {
     public:
         using PyAnimal<DogBase>::PyAnimal; // Inherit constructors
         // Override PyAnimal's pure virtual go() with a non-pure one:
@@ -428,6 +428,51 @@ Python side by allowing the Python function to return ``None`` or an ``int``:
         return false;  // Alternatively return MyClass::myMethod(value);
     }
 
+Avoiding Inheritance Slicing and ``std::weak_ptr`` surprises
+------------------------------------------------------------
+
+When working with classes that use virtual functions and are subclassed
+in Python, special care must be taken when converting Python objects to
+``std::shared_ptr<T>``. Depending on whether the class uses a plain
+``std::shared_ptr`` holder or ``py::smart_holder``, the resulting
+``shared_ptr`` may either allow inheritance slicing or lead to potentially
+surprising behavior when constructing ``std::weak_ptr`` instances.
+
+This section explains how ``std::shared_ptr`` and ``py::smart_holder`` manage
+object lifetimes differently, how these differences affect trampoline-derived
+objects, and what options are available to achieve the situation-specific
+desired behavior.
+
+When using ``std::shared_ptr`` as the holder type, converting a Python object
+to a ``std::shared_ptr<T>`` (e.g., ``obj.cast<std::shared_ptr<T>>()``, or simply
+passing the Python object as an argument to a ``.def()``-ed function) returns
+a ``shared_ptr`` that shares ownership with the original ``class_`` holder,
+usually preserving object lifetime. However, for Python classes that derive from
+a trampoline, if the Python object is destroyed, only the base C++ object may
+remain alive, leading to inheritance slicing
+(see `#1333 <https://github.com/pybind/pybind11/issues/1333>`_).
+
+In contrast, with ``py::smart_holder``, converting a Python object to
+a ``std::shared_ptr<T>`` returns a new ``shared_ptr`` with an independent
+control block that keeps the derived Python object alive. This avoids
+inheritance slicing but can lead to unintended behavior when creating
+``std::weak_ptr`` instances
+(see `#5623 <https://github.com/pybind/pybind11/issues/5623>`_).
+
+If it is necessary to obtain a ``std::weak_ptr`` that shares the control block
+with the ``smart_holder``—at the cost of reintroducing potential inheritance
+slicing—you can use ``py::potentially_slicing_weak_ptr<T>(obj)``.
+
+When precise lifetime management of derived Python objects is important,
+using a Python-side ``weakref`` is the most reliable approach, as it avoids
+both inheritance slicing and unintended interactions with ``std::weak_ptr``
+semantics in C++.
+
+.. seealso::
+
+    * :func:`potentially_slicing_weak_ptr` C++ documentation
+    * :file:`tests/test_potentially_slicing_weak_ptr.cpp`
+
 
 .. _custom_constructors:
 
@@ -519,7 +564,7 @@ an alias:
         // ...
         virtual ~Example() = default;
     };
-    class PyExample : public Example, py::trampoline_self_life_support {
+    class PyExample : public Example, public py::trampoline_self_life_support {
     public:
         using Example::Example;
         PyExample(Example &&base) : Example(std::move(base)) {}
@@ -729,7 +774,7 @@ to Python.
 
     #include <pybind11/operators.h>
 
-    PYBIND11_MODULE(example, m) {
+    PYBIND11_MODULE(example, m, py::mod_gil_not_used()) {
         py::class_<Vector2>(m, "Vector2")
             .def(py::init<float, float>())
             .def(py::self + py::self)
@@ -927,9 +972,14 @@ Module-local class bindings
 ===========================
 
 When creating a binding for a class, pybind11 by default makes that binding
-"global" across modules.  What this means is that a type defined in one module
-can be returned from any module resulting in the same Python type.  For
-example, this allows the following:
+"global" across modules. What this means is that instances whose type is
+defined with a ``py::class_`` statement in one module can be passed to or
+returned from a function defined in any other module that is "ABI compatible"
+with the first, i.e., that was built with sufficiently similar versions of
+pybind11 and of the C++ compiler and C++ standard library. The internal data
+structures that pybind11 uses to keep track of its types and instances are
+shared just as they would be if everything were in the same module.
+For example, this allows the following:
 
 .. code-block:: cpp
 
@@ -1125,7 +1175,7 @@ described trampoline:
         virtual int foo() const { return 42; }
     };
 
-    class Trampoline : public A, py::trampoline_self_life_support {
+    class Trampoline : public A, public py::trampoline_self_life_support {
     public:
         int foo() const override { PYBIND11_OVERRIDE(int, A, foo, ); }
     };
@@ -1339,13 +1389,21 @@ You can do that using ``py::custom_type_setup``:
            auto *type = &heap_type->ht_type;
            type->tp_flags |= Py_TPFLAGS_HAVE_GC;
            type->tp_traverse = [](PyObject *self_base, visitproc visit, void *arg) {
-               auto &self = py::cast<OwnsPythonObjects&>(py::handle(self_base));
-               Py_VISIT(self.value.ptr());
+   // https://docs.python.org/3/c-api/typeobj.html#c.PyTypeObject.tp_traverse
+   #if PY_VERSION_HEX >= 0x03090000
+               Py_VISIT(Py_TYPE(self_base));
+   #endif
+               if (py::detail::is_holder_constructed(self_base)) {
+                   auto &self = py::cast<OwnsPythonObjects&>(py::handle(self_base));
+                   Py_VISIT(self.value.ptr());
+               }
                return 0;
            };
            type->tp_clear = [](PyObject *self_base) {
-               auto &self = py::cast<OwnsPythonObjects&>(py::handle(self_base));
-               self.value = py::none();
+               if (py::detail::is_holder_constructed(self_base)) {
+                   auto &self = py::cast<OwnsPythonObjects&>(py::handle(self_base));
+                   self.value = py::none();
+               }
                return 0;
            };
        }));

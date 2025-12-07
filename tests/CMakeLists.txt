@@ -67,8 +67,10 @@ project(pybind11_tests CXX)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/../tools")
 
 option(PYBIND11_WERROR "Report all warnings as errors" OFF)
+option(DOWNLOAD_CATCH "Download catch2 if not found" OFF)
 option(DOWNLOAD_EIGEN "Download EIGEN" OFF)
 option(PYBIND11_CUDA_TESTS "Enable building CUDA tests" OFF)
+option(PYBIND11_TEST_SMART_HOLDER "Change the default to smart holder" OFF)
 set(PYBIND11_TEST_OVERRIDE
     ""
     CACHE STRING "Tests from ;-separated list of *.cpp files will be built instead of all tests")
@@ -115,6 +117,7 @@ set(PYBIND11_TEST_FILES
     test_callbacks
     test_chrono
     test_class
+    test_class_cross_module_use_after_one_module_dealloc
     test_class_release_gil_before_calling_cpp_dtor
     test_class_sh_basic
     test_class_sh_disowning
@@ -154,15 +157,19 @@ set(PYBIND11_TEST_FILES
     test_methods_and_attributes
     test_modules
     test_multiple_inheritance
+    test_multiple_interpreters.py
     test_native_enum
     test_numpy_array
     test_numpy_dtypes
+    test_numpy_scalars
     test_numpy_vectorize
     test_opaque_types
     test_operator_overloading
     test_pickling
+    test_potentially_slicing_weak_ptr
     test_python_multiple_inheritance
     test_pytypes
+    test_scoped_critical_section
     test_sequences_and_iterators
     test_smart_ptr
     test_stl
@@ -233,8 +240,9 @@ list(SORT PYBIND11_PYTEST_FILES)
 # Contains the set of test files that require pybind11_cross_module_tests to be
 # built; if none of these are built (i.e. because TEST_OVERRIDE is used and
 # doesn't include them) the second module doesn't get built.
-tests_extra_targets("test_exceptions.py;test_local_bindings.py;test_stl.py;test_stl_binders.py"
-                    "pybind11_cross_module_tests")
+tests_extra_targets(
+  "test_class_cross_module_use_after_one_module_dealloc.py;test_exceptions.py;test_local_bindings.py;test_stl.py;test_stl_binders.py"
+  "pybind11_cross_module_tests")
 
 # And add additional targets for other tests.
 tests_extra_targets("test_exceptions.py" "cross_module_interleaved_error_already_set")
@@ -497,6 +505,13 @@ foreach(target ${test_targets})
     target_compile_definitions(${target} PRIVATE -DPYBIND11_TEST_BOOST)
   endif()
 
+  if(PYBIND11_TEST_SMART_HOLDER)
+    target_compile_definitions(
+      ${target}
+      PUBLIC -DPYBIND11_RUN_TESTING_WITH_SMART_HOLDER_AS_DEFAULT_BUT_NEVER_USE_IN_PRODUCTION_PLEASE
+    )
+  endif()
+
   target_link_libraries(${target} PRIVATE ${STD_FS_LIB})
 
   # Always write the output file directly into the 'tests' directory (even on MSVC)
@@ -562,6 +577,27 @@ add_custom_target(
   WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
   USES_TERMINAL)
 
+if(NOT PYBIND11_CUDA_TESTS)
+  # This module doesn't get mixed with other test modules because those aren't subinterpreter safe.
+  pybind11_add_module(mod_per_interpreter_gil THIN_LTO mod_per_interpreter_gil.cpp)
+  pybind11_add_module(mod_shared_interpreter_gil THIN_LTO mod_shared_interpreter_gil.cpp)
+  set_target_properties(mod_per_interpreter_gil PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+                                                           "$<1:${CMAKE_CURRENT_BINARY_DIR}>")
+  set_target_properties(mod_shared_interpreter_gil PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+                                                              "$<1:${CMAKE_CURRENT_BINARY_DIR}>")
+  if(PYBIND11_TEST_SMART_HOLDER)
+    target_compile_definitions(
+      mod_per_interpreter_gil
+      PUBLIC -DPYBIND11_RUN_TESTING_WITH_SMART_HOLDER_AS_DEFAULT_BUT_NEVER_USE_IN_PRODUCTION_PLEASE
+    )
+    target_compile_definitions(
+      mod_shared_interpreter_gil
+      PUBLIC -DPYBIND11_RUN_TESTING_WITH_SMART_HOLDER_AS_DEFAULT_BUT_NEVER_USE_IN_PRODUCTION_PLEASE
+    )
+  endif()
+  add_dependencies(pytest mod_per_interpreter_gil mod_shared_interpreter_gil)
+endif()
+
 if(PYBIND11_TEST_OVERRIDE)
   add_custom_command(
     TARGET pytest
@@ -613,9 +649,12 @@ if(NOT PYBIND11_CUDA_TESTS)
   # Test pure C++ code (not depending on Python). Provides the `test_pure_cpp` target.
   add_subdirectory(pure_cpp)
 
-  # Test embedding the interpreter. Provides the `cpptest` target.
-  add_subdirectory(test_embed)
+  # Test C++ code that depends on Python, such as embedding the interpreter. Provides the `cpptest` target.
+  add_subdirectory(test_with_catch)
 
   # Test CMake build using functions and targets from subdirectory or installed location
   add_subdirectory(test_cmake_build)
+
+  # Test visibility of common symbols across shared libraries
+  add_subdirectory(test_cross_module_rtti)
 endif()

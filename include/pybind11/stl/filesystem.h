@@ -17,7 +17,7 @@
 #elif defined(PYBIND11_HAS_EXPERIMENTAL_FILESYSTEM)
 #    include <experimental/filesystem>
 #else
-#    error "Neither #include <filesystem> nor #include <experimental/filesystem is available."
+#    error "Neither #include <filesystem> nor #include <experimental/filesystem> is available."
 #endif
 
 PYBIND11_NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
@@ -96,7 +96,7 @@ public:
         return true;
     }
 
-    PYBIND11_TYPE_CASTER(T, io_name("Union[os.PathLike, str, bytes]", "pathlib.Path"));
+    PYBIND11_TYPE_CASTER(T, io_name("os.PathLike | str | bytes", "pathlib.Path"));
 };
 
 #endif // PYBIND11_HAS_FILESYSTEM || defined(PYBIND11_HAS_EXPERIMENTAL_FILESYSTEM)

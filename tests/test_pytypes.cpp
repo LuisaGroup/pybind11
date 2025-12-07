@@ -155,7 +155,7 @@ namespace detail {
 
 template <>
 struct type_caster<RealNumber> {
-    PYBIND11_TYPE_CASTER(RealNumber, io_name("Union[float, int]", "float"));
+    PYBIND11_TYPE_CASTER(RealNumber, io_name("float | int", "float"));
 
     static handle cast(const RealNumber &number, return_value_policy, handle) {
         return py::float_(number.value).release();
@@ -209,6 +209,7 @@ TEST_SUBMODULE(pytypes, m) {
     m.def("get_tuple_from_iterable", [](const py::iterable &iter) { return py::tuple(iter); });
     // test_float
     m.def("get_float", [] { return py::float_(0.0f); });
+    m.def("float_roundtrip", [](py::float_ f) { return f; });
     // test_list
     m.def("list_no_args", []() { return py::list{}; });
     m.def("list_ssize_t", []() { return py::list{(py::ssize_t) 0}; });
@@ -1010,7 +1011,8 @@ TEST_SUBMODULE(pytypes, m) {
 
     m.def("transform_tuple_plus_one", [](py::tuple &tpl) {
         py::list ret{};
-        for (auto it : tpl | std::views::transform([](auto &o) { return py::cast<int>(o) + 1; })) {
+        for (auto &&it :
+             tpl | std::views::transform([](const auto &o) { return py::cast<int>(o) + 1; })) {
             ret.append(py::int_(it));
         }
         return ret;
@@ -1025,7 +1027,8 @@ TEST_SUBMODULE(pytypes, m) {
 
     m.def("transform_list_plus_one", [](py::list &lst) {
         py::list ret{};
-        for (auto it : lst | std::views::transform([](auto &o) { return py::cast<int>(o) + 1; })) {
+        for (auto &&it :
+             lst | std::views::transform([](const auto &o) { return py::cast<int>(o) + 1; })) {
             ret.append(py::int_(it));
         }
         return ret;

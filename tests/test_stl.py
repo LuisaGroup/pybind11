@@ -22,7 +22,7 @@ def test_vector(doc):
     assert doc(m.cast_vector) == "cast_vector() -> list[int]"
     assert (
         doc(m.load_vector)
-        == "load_vector(arg0: collections.abc.Sequence[typing.SupportsInt]) -> bool"
+        == "load_vector(arg0: collections.abc.Sequence[typing.SupportsInt | typing.SupportsIndex]) -> bool"
     )
 
     # Test regression caused by 936: pointers to stl containers weren't castable
@@ -51,7 +51,7 @@ def test_array(doc):
     )
     assert (
         doc(m.load_array)
-        == 'load_array(arg0: typing.Annotated[collections.abc.Sequence[typing.SupportsInt], "FixedSize(2)"]) -> bool'
+        == 'load_array(arg0: typing.Annotated[collections.abc.Sequence[typing.SupportsInt | typing.SupportsIndex], "FixedSize(2)"]) -> bool'
     )
 
 
@@ -72,7 +72,7 @@ def test_valarray(doc):
     assert doc(m.cast_valarray) == "cast_valarray() -> list[int]"
     assert (
         doc(m.load_valarray)
-        == "load_valarray(arg0: collections.abc.Sequence[typing.SupportsInt]) -> bool"
+        == "load_valarray(arg0: collections.abc.Sequence[typing.SupportsInt | typing.SupportsIndex]) -> bool"
     )
 
 
@@ -227,10 +227,15 @@ def test_boost_optional():
     assert int(props.access_by_copy) == 42
 
 
-def test_reference_sensitive_optional():
+def test_reference_sensitive_optional(doc):
     assert m.double_or_zero_refsensitive(None) == 0
     assert m.double_or_zero_refsensitive(42) == 84
     pytest.raises(TypeError, m.double_or_zero_refsensitive, "foo")
+
+    assert (
+        doc(m.double_or_zero_refsensitive)
+        == "double_or_zero_refsensitive(arg0: typing.SupportsInt | typing.SupportsIndex | None) -> int"
+    )
 
     assert m.half_or_none_refsensitive(0) is None
     assert m.half_or_none_refsensitive(42) == 21
@@ -257,7 +262,7 @@ def test_reference_sensitive_optional():
 
 
 @pytest.mark.skipif(not hasattr(m, "has_filesystem"), reason="no <filesystem>")
-def test_fs_path(doc):
+def test_fs_path():
     from pathlib import Path
 
     class PseudoStrPath:
@@ -274,37 +279,17 @@ def test_fs_path(doc):
     assert m.parent_path(b"foo/bar") == Path("foo")
     assert m.parent_path(PseudoStrPath()) == Path("foo")
     assert m.parent_path(PseudoBytesPath()) == Path("foo")
-    assert (
-        doc(m.parent_path)
-        == "parent_path(arg0: Union[os.PathLike, str, bytes]) -> pathlib.Path"
-    )
     # std::vector
     assert m.parent_paths(["foo/bar", "foo/baz"]) == [Path("foo"), Path("foo")]
-    assert (
-        doc(m.parent_paths)
-        == "parent_paths(arg0: collections.abc.Sequence[Union[os.PathLike, str, bytes]]) -> list[pathlib.Path]"
-    )
     # py::typing::List
     assert m.parent_paths_list(["foo/bar", "foo/baz"]) == [Path("foo"), Path("foo")]
-    assert (
-        doc(m.parent_paths_list)
-        == "parent_paths_list(arg0: list[Union[os.PathLike, str, bytes]]) -> list[pathlib.Path]"
-    )
     # Nested py::typing::List
     assert m.parent_paths_nested_list([["foo/bar"], ["foo/baz", "foo/buzz"]]) == [
         [Path("foo")],
         [Path("foo"), Path("foo")],
     ]
-    assert (
-        doc(m.parent_paths_nested_list)
-        == "parent_paths_nested_list(arg0: list[list[Union[os.PathLike, str, bytes]]]) -> list[list[pathlib.Path]]"
-    )
     # py::typing::Tuple
     assert m.parent_paths_tuple(("foo/bar", "foo/baz")) == (Path("foo"), Path("foo"))
-    assert (
-        doc(m.parent_paths_tuple)
-        == "parent_paths_tuple(arg0: tuple[Union[os.PathLike, str, bytes], Union[os.PathLike, str, bytes]]) -> tuple[pathlib.Path, pathlib.Path]"
-    )
     # py::typing::Dict
     assert m.parent_paths_dict(
         {
@@ -317,9 +302,39 @@ def test_fs_path(doc):
         "key2": Path("foo"),
         "key3": Path("foo"),
     }
+
+
+@pytest.mark.skipif(not hasattr(m, "has_filesystem"), reason="no <filesystem>")
+def test_path_typing(doc):
+    # Single argument
+    assert (
+        doc(m.parent_path)
+        == "parent_path(arg0: os.PathLike | str | bytes) -> pathlib.Path"
+    )
+    # std::vector
+    assert (
+        doc(m.parent_paths)
+        == "parent_paths(arg0: collections.abc.Sequence[os.PathLike | str | bytes]) -> list[pathlib.Path]"
+    )
+    # py::typing::List
+    assert (
+        doc(m.parent_paths_list)
+        == "parent_paths_list(arg0: list[os.PathLike | str | bytes]) -> list[pathlib.Path]"
+    )
+    # Nested py::typing::List
+    assert (
+        doc(m.parent_paths_nested_list)
+        == "parent_paths_nested_list(arg0: list[list[os.PathLike | str | bytes]]) -> list[list[pathlib.Path]]"
+    )
+    # py::typing::Tuple
+    assert (
+        doc(m.parent_paths_tuple)
+        == "parent_paths_tuple(arg0: tuple[os.PathLike | str | bytes, os.PathLike | str | bytes]) -> tuple[pathlib.Path, pathlib.Path]"
+    )
+    # py::typing::Dict
     assert (
         doc(m.parent_paths_dict)
-        == "parent_paths_dict(arg0: dict[str, Union[os.PathLike, str, bytes]]) -> dict[str, pathlib.Path]"
+        == "parent_paths_dict(arg0: dict[str, os.PathLike | str | bytes]) -> dict[str, pathlib.Path]"
     )
 
 
@@ -337,7 +352,7 @@ def test_variant(doc):
 
     assert (
         doc(m.load_variant)
-        == "load_variant(arg0: Union[typing.SupportsInt, str, typing.SupportsFloat, None]) -> str"
+        == "load_variant(arg0: typing.SupportsInt | typing.SupportsIndex | str | typing.SupportsFloat | typing.SupportsIndex | None) -> str"
     )
 
 
@@ -353,7 +368,7 @@ def test_variant_monostate(doc):
 
     assert (
         doc(m.load_monostate_variant)
-        == "load_monostate_variant(arg0: Union[None, typing.SupportsInt, str]) -> str"
+        == "load_monostate_variant(arg0: None | typing.SupportsInt | typing.SupportsIndex | str) -> str"
     )
 
 
@@ -373,7 +388,7 @@ def test_stl_pass_by_pointer(msg):
         msg(excinfo.value)
         == """
         stl_pass_by_pointer(): incompatible function arguments. The following argument types are supported:
-            1. (v: collections.abc.Sequence[typing.SupportsInt] = None) -> list[int]
+            1. (v: collections.abc.Sequence[typing.SupportsInt | typing.SupportsIndex] = None) -> list[int]
 
         Invoked with:
     """
@@ -385,7 +400,7 @@ def test_stl_pass_by_pointer(msg):
         msg(excinfo.value)
         == """
         stl_pass_by_pointer(): incompatible function arguments. The following argument types are supported:
-            1. (v: collections.abc.Sequence[typing.SupportsInt] = None) -> list[int]
+            1. (v: collections.abc.Sequence[typing.SupportsInt | typing.SupportsIndex] = None) -> list[int]
 
         Invoked with: None
     """
@@ -600,7 +615,7 @@ def test_sequence_caster_protocol(doc):
     # convert mode
     assert (
         doc(m.roundtrip_std_vector_int)
-        == "roundtrip_std_vector_int(arg0: collections.abc.Sequence[typing.SupportsInt]) -> list[int]"
+        == "roundtrip_std_vector_int(arg0: collections.abc.Sequence[typing.SupportsInt | typing.SupportsIndex]) -> list[int]"
     )
     assert m.roundtrip_std_vector_int([1, 2, 3]) == [1, 2, 3]
     assert m.roundtrip_std_vector_int((1, 2, 3)) == [1, 2, 3]
@@ -653,7 +668,7 @@ def test_mapping_caster_protocol(doc):
     # convert mode
     assert (
         doc(m.roundtrip_std_map_str_int)
-        == "roundtrip_std_map_str_int(arg0: collections.abc.Mapping[str, typing.SupportsInt]) -> dict[str, int]"
+        == "roundtrip_std_map_str_int(arg0: collections.abc.Mapping[str, typing.SupportsInt | typing.SupportsIndex]) -> dict[str, int]"
     )
     assert m.roundtrip_std_map_str_int(a1b2c3) == a1b2c3
     assert m.roundtrip_std_map_str_int(FormalMappingLike(**a1b2c3)) == a1b2c3
@@ -699,7 +714,7 @@ def test_set_caster_protocol(doc):
     # convert mode
     assert (
         doc(m.roundtrip_std_set_int)
-        == "roundtrip_std_set_int(arg0: collections.abc.Set[typing.SupportsInt]) -> set[int]"
+        == "roundtrip_std_set_int(arg0: collections.abc.Set[typing.SupportsInt | typing.SupportsIndex]) -> set[int]"
     )
     assert m.roundtrip_std_set_int({1, 2, 3}) == {1, 2, 3}
     assert m.roundtrip_std_set_int(FormalSetLike(1, 2, 3)) == {1, 2, 3}

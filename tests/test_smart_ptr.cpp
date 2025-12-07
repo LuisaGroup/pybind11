@@ -69,6 +69,20 @@ public:
     T **operator&() { throw std::logic_error("Call of overloaded operator& is not expected"); }
 };
 
+// Simple custom holder that imitates smart pointer, that always stores cpointer to const
+template <class T>
+class const_only_shared_ptr {
+    std::shared_ptr<const T> ptr_;
+
+public:
+    const_only_shared_ptr() = default;
+    explicit const_only_shared_ptr(const T *ptr) : ptr_(ptr) {}
+    const T *get() const { return ptr_.get(); }
+
+private:
+    // for demonstration purpose only, this imitates smart pointer with a const-only pointer
+};
+
 // Custom object with builtin reference counting (see 'object.h' for the implementation)
 class MyObject1 : public Object {
 public:
@@ -147,6 +161,8 @@ public:
         print_created(this);
         pointer_set<MyObject4a>().insert(this);
     };
+    MyObject4a(const MyObject4a &) = delete;
+
     int value;
 
     static void cleanupAllInstances() {
@@ -168,6 +184,7 @@ protected:
 class MyObject4b : public MyObject4a {
 public:
     explicit MyObject4b(int i) : MyObject4a(i) { print_created(this); }
+    MyObject4b(const MyObject4b &) = delete;
     ~MyObject4b() override { print_destroyed(this); }
 };
 
@@ -175,8 +192,23 @@ public:
 class MyObject5 { // managed by huge_unique_ptr
 public:
     explicit MyObject5(int value) : value{value} { print_created(this); }
+    MyObject5(const MyObject5 &) = delete;
     ~MyObject5() { print_destroyed(this); }
     int value;
+};
+
+// test const_only_shared_ptr
+class MyObject6 {
+public:
+    static const_only_shared_ptr<MyObject6> createObject(std::string value) {
+        return const_only_shared_ptr<MyObject6>(new MyObject6(std::move(value)));
+    }
+
+    const std::string &value() const { return value_; }
+
+private:
+    explicit MyObject6(std::string &&value) : value_{std::move(value)} {}
+    std::string value_;
 };
 
 // test_shared_ptr_and_references
@@ -217,6 +249,7 @@ struct SharedFromThisVirt : virtual SharedFromThisVBase {};
 // test_move_only_holder
 struct C {
     C() { print_created(this); }
+    C(const C &) = delete;
     ~C() { print_destroyed(this); }
 };
 
@@ -237,6 +270,7 @@ struct TypeForHolderWithAddressOf {
 // test_move_only_holder_with_addressof_operator
 struct TypeForMoveOnlyHolderWithAddressOf {
     explicit TypeForMoveOnlyHolderWithAddressOf(int value) : value{value} { print_created(this); }
+    TypeForMoveOnlyHolderWithAddressOf(const TypeForMoveOnlyHolderWithAddressOf &) = delete;
     ~TypeForMoveOnlyHolderWithAddressOf() { print_destroyed(this); }
     std::string toString() const {
         return "MoveOnlyHolderWithAddressOf[" + std::to_string(value) + "]";
@@ -283,6 +317,7 @@ struct holder_helper<ref<T>> {
 
 // Make pybind aware of the ref-counted wrapper type (s):
 PYBIND11_DECLARE_HOLDER_TYPE(T, ref<T>, true)
+PYBIND11_DECLARE_HOLDER_TYPE(T, const_only_shared_ptr<T>, true)
 // The following is not required anymore for std::shared_ptr, but it should compile without error:
 PYBIND11_DECLARE_HOLDER_TYPE(T, std::shared_ptr<T>)
 PYBIND11_DECLARE_HOLDER_TYPE(T, huge_unique_ptr<T>)
@@ -439,6 +474,10 @@ TEST_SUBMODULE(smart_ptr, m) {
         .def(py::init<int>())
         .def_readwrite("value", &MyObject5::value);
 
+    py::class_<MyObject6, const_only_shared_ptr<MyObject6>>(m, "MyObject6")
+        .def(py::init([](const std::string &value) { return MyObject6::createObject(value); }))
+        .def_property_readonly("value", &MyObject6::value);
+
     // test_shared_ptr_and_references
     using A = SharedPtrRef::A;
     py::class_<A, std::shared_ptr<A>>(m, "A");
@@ -540,6 +579,7 @@ TEST_SUBMODULE(smart_ptr, m) {
             return list;
         });
 
+    // NOLINTNEXTLINE(bugprone-incorrect-enable-shared-from-this)
     class PrivateESFT : /* implicit private */ std::enable_shared_from_this<PrivateESFT> {};
     struct ContainerUsingPrivateESFT {
         std::shared_ptr<PrivateESFT> ptr;

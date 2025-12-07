@@ -12,6 +12,7 @@
 
 #include "detail/common.h"
 #include "cast.h"
+#include "trampoline_self_life_support.h"
 
 #include <functional>
 
@@ -311,6 +312,12 @@ struct type_record {
 
     /// Function pointer to class_<..>::dealloc
     void (*dealloc)(detail::value_and_holder &) = nullptr;
+
+    /// Function pointer for casting alias class (aka trampoline) pointer to
+    /// trampoline_self_life_support pointer. Sidesteps cross-DSO RTTI issues
+    /// on platforms like macOS (see PR #5728 for details).
+    get_trampoline_self_life_support_fn get_trampoline_self_life_support
+        = [](void *) -> trampoline_self_life_support * { return nullptr; };
 
     /// List of base classes of the newly created type
     list bases;
@@ -694,6 +701,12 @@ struct process_attributes {
             0, (process_attribute<typename std::decay<Args>::type>::postcall(call, fn_ret), 0)...};
     }
 };
+
+template <typename T>
+struct is_keep_alive : std::false_type {};
+
+template <size_t Nurse, size_t Patient>
+struct is_keep_alive<keep_alive<Nurse, Patient>> : std::true_type {};
 
 template <typename T>
 using is_call_guard = is_instantiation<call_guard, T>;
