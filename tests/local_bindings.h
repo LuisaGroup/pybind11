@@ -29,11 +29,11 @@ using ExternalType1 = LocalBase<6>; // default holder
 using ExternalType2 = LocalBase<7>; // held by std::shared_ptr
 using ExternalType3 = LocalBase<8>; // held by smart_holder
 
-using LocalVec = std::vector<LocalType>;
-using LocalVec2 = std::vector<NonLocal2>;
+using LocalVec = luisa::vector<LocalType>;
+using LocalVec2 = luisa::vector<NonLocal2>;
 using LocalMap = std::unordered_map<std::string, LocalType>;
-using NonLocalVec = std::vector<NonLocalType>;
-using NonLocalVec2 = std::vector<NonLocal2>;
+using NonLocalVec = luisa::vector<NonLocalType>;
+using NonLocalVec2 = luisa::vector<NonLocal2>;
 using NonLocalMap = std::unordered_map<std::string, NonLocalType>;
 using NonLocalMap2 = std::unordered_map<std::string, uint8_t>;
 

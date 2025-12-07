@@ -277,6 +277,7 @@ public:
 #ifdef PYBIND11_HANDLE_REF_DEBUG
         inc_ref_counter(1);
 #endif
+#ifdef PYBIND11_ASSERT_GIL_HELD_INCREF_DECREF
         if (m_ptr != nullptr && PyGILState_Check() == 0) {
             throw_gilstate_error("pybind11::handle::inc_ref()");
         }

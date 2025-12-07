@@ -345,6 +345,11 @@ struct type_info {
     void (*init_instance)(instance *, const void *);
     void (*dealloc)(value_and_holder &v_h);
 
+    // Cross-DSO-safe function pointers, to sidestep cross-DSO RTTI issues
+    // on platforms like macOS (see PR #5728 for details):
+    memory::get_guarded_delete_fn get_memory_guarded_delete = memory::get_guarded_delete;
+    get_trampoline_self_life_support_fn get_trampoline_self_life_support = nullptr;
+
     luisa::vector<PyObject *(*) (PyObject *, PyTypeObject *)> implicit_conversions;
     luisa::vector<std::pair<const std::type_info *, void *(*) (void *)>> implicit_casts;
     luisa::vector<bool (*)(PyObject *, void *&)> *direct_conversions;

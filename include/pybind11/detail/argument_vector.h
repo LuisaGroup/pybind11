@@ -57,7 +57,7 @@ union inline_array_or_vector {
     };
     struct heap_vector {
         bool is_inline = false;
-        std::vector<VectorT> vec;
+        luisa::vector<VectorT> vec;
 
         heap_vector() = default;
         heap_vector(std::size_t count, VectorT value) : vec(count, value) {}
