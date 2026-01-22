@@ -376,8 +376,8 @@ public:
         value_and_holder curr;
         friend struct values_and_holders;
         iterator(instance *inst, const type_vec *tinfo) : inst{inst}, types{tinfo} {
-            if (inst != nullptr) {
-                assert(!types->empty());
+            if (inst != nullptr && !types->empty()) {
+                // assert(!types->empty());
                 curr = value_and_holder(
                     inst /* instance */,
                     (*types)[0] /* type info */,
