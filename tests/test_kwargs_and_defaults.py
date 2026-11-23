@@ -249,6 +249,20 @@ def test_mixed_args_and_kwargs(msg):
     assert m.args_kwonly_kwargs_defaults(5, 6, 7, m=8, z=9) == (5, 6, (7,), 9, {"m": 8})
 
 
+def test_args_kwonly_noconvert():
+    # The noconvert flag must stay on x, the argument it was given for.
+    assert m.args_kwonly_noconvert(1, 2, x=True, y=1) == ((1, 2), True, True)
+    with pytest.raises(TypeError):
+        m.args_kwonly_noconvert(x=1, y=True)
+
+
+def test_args_kwonly_second_pass():
+    # Only the keyword-only argument can convert, so the second pass must run.
+    assert m.args_kwonly_second_pass(s="a") == "str: a"
+    assert m.args_kwonly_second_pass(b=True) == "bool: True"
+    assert m.args_kwonly_second_pass(b=1) == "bool: True"
+
+
 def test_keyword_only_args(msg):
     assert m.kw_only_all(i=1, j=2) == (1, 2)
     assert m.kw_only_all(j=1, i=2) == (2, 1)
@@ -471,3 +485,9 @@ def test_args_refcount():
     assert m.mixed_args_refcount(myval, myval, myval) == (exp3_3, exp3_3, exp3_3)
 
     assert m.class_default_argument() == "<class 'decimal.Decimal'>"
+
+
+def test_exactly_64_keyword_arguments():
+    # Fills the inline storage of the bool vector that tracks used keywords (on 64-bit).
+    extra = {f"k{i}": i for i in range(63)}
+    assert m.args_kwonly_kwargs(1, 2.5, z=3, **extra) == (1, 2.5, (), 3, extra)

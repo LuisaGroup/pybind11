@@ -13,8 +13,11 @@ PYBIND11_WARNING_DISABLE_MSVC(4996)
 #    include <cstdlib>
 #    include <fstream>
 #    include <functional>
+#    include <memory>
+#    include <new>
 #    include <thread>
 #    include <utility>
+#    include <vector>
 
 namespace py = pybind11;
 using namespace py::literals;
@@ -40,6 +43,130 @@ void unsafe_reset_internals_for_single_interpreter() {
     // finally, we reload the static global singleton
     py::detail::get_internals();
     py::detail::get_local_internals();
+}
+
+TEST_CASE("Internals cache retries after a failed lookup") {
+    struct test_internals {
+        bool fail_next_fetch = true;
+    };
+    using manager_type = py::detail::internals_pp_manager<test_internals>;
+    constexpr const char *key = "_pybind11_test_internals_cache_lookup_retry";
+    auto &manager = manager_type::get_instance(key, [](test_internals *internals) {
+        if (internals && internals->fail_next_fetch) {
+            internals->fail_next_fetch = false;
+            throw std::bad_alloc();
+        }
+    });
+    struct reset_guard {
+        manager_type &manager;
+        ~reset_guard() {
+            manager.unref();
+            unsafe_reset_internals_for_single_interpreter();
+        }
+    } reset{manager};
+
+    // Creating a subinterpreter enables the per-thread interpreter cache.
+    auto sub = py::subinterpreter::create();
+    manager.unref();
+
+    auto check_failed_lookup = [&]() {
+        py::subinterpreter_scoped_activate activate(sub);
+        // Prepopulate the capsule so that the lookup invokes on_fetch instead of creating it.
+        auto *expected_pp
+            = py::detail::atomic_get_or_create_in_state_dict<std::unique_ptr<test_internals>>(key)
+                  .first;
+        expected_pp->reset(new test_internals());
+        REQUIRE_THROWS_AS(manager.get_pp(), std::bad_alloc);
+
+        // A failed lookup must neither cache nullptr nor retain another interpreter's pointer.
+        REQUIRE(manager.get_pp() == expected_pp);
+    };
+
+    SECTION("Initially empty cache") { check_failed_lookup(); }
+    SECTION("Cached pointer from another interpreter") {
+        auto *main_pp
+            = py::detail::atomic_get_or_create_in_state_dict<std::unique_ptr<test_internals>>(key)
+                  .first;
+        REQUIRE(manager.get_pp() == main_pp);
+        check_failed_lookup();
+    }
+}
+
+TEST_CASE("First subinterpreter initialization preserves the singleton cache",
+          "[internals_init]") {
+    // No worker threads or other subinterpreters may be alive while resetting the cache mode.
+    unsafe_reset_internals_for_single_interpreter();
+    auto &manager = py::detail::get_internals_pp_manager();
+    auto *main_pp = manager.get_pp();
+
+    struct reset_guard {
+        PyThreadState *main_tstate;
+        PyThreadState *sub_tstate = nullptr;
+        PyObject *state_dict = nullptr;
+        PyObject *capsule = nullptr;
+
+        explicit reset_guard(PyThreadState *main) : main_tstate(main) {}
+
+        void end_subinterpreter() {
+            if (sub_tstate == nullptr) {
+                return;
+            }
+            // Also handle assertions that fail before ensure_internals() enables TLS caching.
+            py::detail::has_seen_non_main_interpreter() = true;
+            py::detail::get_internals_pp_manager().get_pp();
+            py::detail::get_local_internals_pp_manager().get_pp();
+            Py_EndInterpreter(sub_tstate);
+            sub_tstate = nullptr;
+            // As in py::subinterpreter's destructor, free holders after interpreter shutdown.
+            py::detail::get_internals_pp_manager().destroy();
+            py::detail::get_local_internals_pp_manager().destroy();
+            PyThreadState_Swap(main_tstate);
+        }
+
+        ~reset_guard() {
+            end_subinterpreter();
+            if (capsule != nullptr) {
+                PyDict_SetItemString(state_dict, PYBIND11_INTERNALS_ID, capsule);
+                Py_DECREF(capsule);
+            }
+            unsafe_reset_internals_for_single_interpreter();
+        }
+    } reset{PyThreadState_Get()};
+
+    REQUIRE_FALSE(py::detail::has_seen_non_main_interpreter());
+    PyInterpreterConfig config{};
+    config.allow_threads = 1;
+    config.check_multi_interp_extensions = 1;
+    config.gil = PyInterpreterConfig_OWN_GIL;
+    // py::subinterpreter::create() would set the flag itself, masking the initialization order.
+    auto status = Py_NewInterpreterFromConfig(&reset.sub_tstate, &config);
+    REQUIRE_FALSE(PyStatus_Exception(status));
+    REQUIRE_FALSE(py::detail::has_seen_non_main_interpreter());
+
+    // This must be the first pybind11 operation in the new interpreter.
+    py::detail::ensure_internals();
+    REQUIRE(py::detail::has_seen_non_main_interpreter());
+    REQUIRE(manager.get_pp() != main_pp);
+    reset.end_subinterpreter();
+
+    // All subinterpreters are gone: clear TLS before selecting the singleton cache again.
+    manager.unref();
+    py::detail::get_local_internals_pp_manager().unref();
+    py::detail::has_seen_non_main_interpreter() = false;
+
+    reset.state_dict = PyInterpreterState_GetDict(PyInterpreterState_Get());
+    REQUIRE(reset.state_dict != nullptr);
+    reset.capsule = Py_XNewRef(PyDict_GetItemString(reset.state_dict, PYBIND11_INTERNALS_ID));
+    REQUIRE(reset.capsule != nullptr);
+    REQUIRE(PyDict_DelItemString(reset.state_dict, PYBIND11_INTERNALS_ID) == 0);
+
+    // Hide the capsule: otherwise an incorrectly cleared singleton could just fetch it again.
+    auto *cached_pp = manager.get_pp();
+    bool preserved_singleton = cached_pp == main_pp;
+    if (!preserved_singleton) {
+        manager.destroy(); // Free the empty holder created by the failed cache lookup.
+    }
+    REQUIRE(preserved_singleton);
 }
 
 py::object &get_dict_type_object() {
@@ -152,6 +279,163 @@ TEST_CASE("Move Subinterpreter") {
     unsafe_reset_internals_for_single_interpreter();
 }
 #    endif
+
+TEST_CASE("Reused Subinterpreter thread state (single interpreter)") {
+    PyThreadState *first = nullptr;
+    PyThreadState *second = nullptr;
+    PyThreadState *transient_ts = nullptr;
+    PyThreadState *worker_ts = nullptr;
+
+    // The subinterpreter is kept in this enclosing scope so that every
+    // subinterpreter_thread_state is destroyed first, then the subinterpreter, and only then
+    // unsafe_reset_internals_for_single_interpreter() runs (after the scope closes).
+    {
+        py::subinterpreter sub = py::subinterpreter::create();
+
+        {
+            py::subinterpreter_thread_state ts(sub);
+
+            {
+                py::subinterpreter_scoped_activate guard(ts);
+                first = PyThreadState_Get();
+                py::list(py::module_::import("sys").attr("path")).append(py::str("."));
+            }
+            {
+                py::subinterpreter_scoped_activate guard(ts);
+                second = PyThreadState_Get();
+            }
+
+            // Same OS thread + same subinterpreter_thread_state => the PyThreadState is reused.
+            REQUIRE(first != nullptr);
+            REQUIRE(first == second);
+
+            // The (subinterpreter const&) ctor does not share with the reusable tstate: while
+            // `ts` is still alive, a transient activation gets a distinct PyThreadState.
+            {
+                py::subinterpreter_scoped_activate guard(sub);
+                transient_ts = PyThreadState_Get();
+            }
+            REQUIRE(transient_ts != first);
+
+            // A different OS thread holds its own subinterpreter_thread_state (both alive
+            // concurrently => distinct PyThreadState pointers).
+            {
+                py::gil_scoped_release nogil;
+                std::thread([&]() {
+                    py::subinterpreter_thread_state worker_ts_owner(sub);
+                    py::subinterpreter_scoped_activate guard(worker_ts_owner);
+                    worker_ts = PyThreadState_Get();
+                    // worker_ts_owner is destroyed at scope exit, on the same OS thread that
+                    // constructed it.
+                }).join();
+            }
+            REQUIRE(worker_ts != nullptr);
+            REQUIRE(worker_ts != first);
+
+            // ts is destructed at the end of this block on this same OS thread (deleting its
+            // PyThreadState), while `sub` is still alive.
+        }
+        // sub is destructed at the end of this block.
+    }
+
+    unsafe_reset_internals_for_single_interpreter();
+}
+
+TEST_CASE("Reused Subinterpreter thread state (multiple interpreters)") {
+    // The core multi-subinterpreter use case: one OS thread alternates between two
+    // subinterpreters and each PyThreadState is preserved across activations.
+    PyThreadState *a1 = nullptr;
+    PyThreadState *a2 = nullptr;
+    PyThreadState *b1 = nullptr;
+    PyThreadState *b2 = nullptr;
+
+    // Everything is kept in this enclosing scope. Destruction order at the closing brace is
+    // ts_b, ts_a, sub_b, sub_a -- i.e. each subinterpreter_thread_state is destroyed before its
+    // subinterpreter -- and unsafe_reset_internals_for_single_interpreter() only runs afterwards.
+    {
+        py::subinterpreter sub_a = py::subinterpreter::create();
+        py::subinterpreter sub_b = py::subinterpreter::create();
+
+        py::subinterpreter_thread_state ts_a(sub_a);
+        py::subinterpreter_thread_state ts_b(sub_b);
+
+        {
+            py::subinterpreter_scoped_activate guard(ts_a);
+            a1 = PyThreadState_Get();
+        }
+        {
+            py::subinterpreter_scoped_activate guard(ts_b);
+            b1 = PyThreadState_Get();
+        }
+        {
+            py::subinterpreter_scoped_activate guard(ts_a);
+            a2 = PyThreadState_Get();
+        }
+        {
+            py::subinterpreter_scoped_activate guard(ts_b);
+            b2 = PyThreadState_Get();
+        }
+
+        REQUIRE(a1 != nullptr);
+        REQUIRE(b1 != nullptr);
+        // Identity is preserved across activations for each interpreter independently.
+        REQUIRE(a1 == a2);
+        REQUIRE(b1 == b2);
+        // And the two interpreters have distinct thread states (both alive => reliable
+        // comparison).
+        REQUIRE(a1 != b1);
+    }
+
+    unsafe_reset_internals_for_single_interpreter();
+}
+
+TEST_CASE("Create Subinterpreter without a thread state") {
+    // subinterpreter::create() documents that "the main interpreter and its GIL are not required
+    // to be held prior to calling this function".  Embedders routinely end their initialization
+    // with PyEval_SaveThread(), which leaves the calling thread with no PyThreadState at all, and
+    // worker threads that have never touched Python have none either.  So create() must not touch
+    // the current thread state before main_guard attaches one.
+
+    PyInterpreterState *main_interp = PyInterpreterState_Get();
+
+    {
+        py::gil_scoped_release nogil;
+        REQUIRE(py::detail::get_thread_state_unchecked() == nullptr);
+
+        // (a) on a thread that dropped its thread state
+        {
+            auto sub = py::subinterpreter::create();
+            REQUIRE(sub.id() >= 0);
+
+            {
+                py::subinterpreter_scoped_activate activate(sub);
+                REQUIRE(PyInterpreterState_Get() != main_interp);
+            }
+
+            REQUIRE(py::detail::get_thread_state_unchecked() == nullptr);
+        }
+
+        // (b) on a thread that never had one.
+        // REQUIRE throws on failure, so we can't use it within the thread: record what we see
+        // and check it on the main test thread after the join.
+        bool thread_started_without_tstate = false;
+        bool thread_result = false;
+        std::thread([&]() {
+            thread_started_without_tstate = (py::detail::get_thread_state_unchecked() == nullptr);
+
+            auto sub = py::subinterpreter::create();
+            py::subinterpreter_scoped_activate activate(sub);
+            thread_result = (PyInterpreterState_Get() != main_interp);
+        }).join();
+        REQUIRE(thread_started_without_tstate);
+        REQUIRE(thread_result);
+
+        REQUIRE(py::detail::get_thread_state_unchecked() == nullptr);
+    }
+
+    REQUIRE(PyInterpreterState_Get() == main_interp);
+    unsafe_reset_internals_for_single_interpreter();
+}
 
 TEST_CASE("GIL Subinterpreter") {
 
@@ -431,6 +715,36 @@ TEST_CASE("gil_safe_call_once_and_store per-interpreter isolation") {
 }
 
 #    ifdef Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
+TEST_CASE("Concurrent Subinterpreter creation") {
+    std::atomic<int> failures{0};
+    {
+        py::gil_scoped_release nogil;
+        std::vector<std::thread> threads;
+        for (int i = 0; i < 8; ++i) {
+            // Odd threads hold the main GIL when they call create(), even threads hold nothing.
+            threads.emplace_back([&failures, i] {
+                for (int j = 0; j < 10; ++j) {
+                    try {
+                        std::unique_ptr<py::gil_scoped_acquire> main_gil;
+                        if (i % 2 == 1) {
+                            main_gil.reset(new py::gil_scoped_acquire());
+                        }
+                        auto sub = py::subinterpreter::create();
+                        py::subinterpreter_scoped_activate guard{sub};
+                        py::module_::import("sys");
+                    } catch (const std::exception &) {
+                        ++failures;
+                    }
+                }
+            });
+        }
+        for (auto &t : threads) {
+            t.join();
+        }
+    }
+    REQUIRE(failures == 0);
+}
+
 TEST_CASE("Per-Subinterpreter GIL") {
     auto main_int
         = py::module_::import("external_module").attr("internals_at")().cast<uintptr_t>();

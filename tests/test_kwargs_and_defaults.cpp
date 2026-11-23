@@ -148,6 +148,23 @@ TEST_SUBMODULE(kwargs_and_defaults, m) {
         "j"_a = 3.14159,
         "z"_a = 42);
 
+    // test_args_kwonly_noconvert
+    m.def(
+        "args_kwonly_noconvert",
+        [](const py::args &args, bool x, bool y) { return py::make_tuple(args, x, y); },
+        py::arg("x").noconvert(),
+        py::arg("y"));
+
+    // test_args_kwonly_second_pass
+    m.def(
+        "args_kwonly_second_pass",
+        [](const py::args &, const std::string &s) { return "str: " + s; },
+        "s"_a);
+    m.def(
+        "args_kwonly_second_pass",
+        [](const py::args &, bool b) { return std::string(b ? "bool: True" : "bool: False"); },
+        "b"_a);
+
 // test_args_refcount
 // PyPy needs a garbage collection to get the reference count values to match CPython's behaviour
 // PyPy uses the top few bits for REFCNT_FROM_PYPY & REFCNT_FROM_PYPY_LIGHT, so truncate
@@ -175,7 +192,7 @@ TEST_SUBMODULE(kwargs_and_defaults, m) {
         py::tuple t(a.size());
         for (size_t i = 0; i < a.size(); i++) {
             // Use raw Python API here to avoid an extra, intermediate incref on the tuple item:
-            t[i] = REFCNT(PyTuple_GET_ITEM(a.ptr(), static_cast<py::ssize_t>(i)));
+            t[i] = REFCNT(PyTuple_GetItem(a.ptr(), static_cast<py::ssize_t>(i)));
         }
         return t;
     });
@@ -185,7 +202,7 @@ TEST_SUBMODULE(kwargs_and_defaults, m) {
         t[0] = o.ref_count();
         for (size_t i = 0; i < a.size(); i++) {
             // Use raw Python API here to avoid an extra, intermediate incref on the tuple item:
-            t[i + 1] = REFCNT(PyTuple_GET_ITEM(a.ptr(), static_cast<py::ssize_t>(i)));
+            t[i + 1] = REFCNT(PyTuple_GetItem(a.ptr(), static_cast<py::ssize_t>(i)));
         }
         return t;
     });

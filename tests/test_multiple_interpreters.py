@@ -13,6 +13,10 @@ import pybind11_tests
 
 if env.IOS:
     pytest.skip("Subinterpreters not supported on iOS", allow_module_level=True)
+if env.LIMITED_API:
+    pytest.skip(
+        "Subinterpreters not supported under the stable ABI", allow_module_level=True
+    )
 
 # 3.14.0b3+, though sys.implementation.supports_isolated_interpreters is being added in b4
 # Can be simplified when we drop support for the first three betas
@@ -157,9 +161,10 @@ def test_independent_subinterpreters_modern():
         """
     ).strip()
 
-    with contextlib.closing(interpreters.create()) as interp1, contextlib.closing(
-        interpreters.create()
-    ) as interp2:
+    with (
+        contextlib.closing(interpreters.create()) as interp1,
+        contextlib.closing(interpreters.create()) as interp2,
+    ):
         with pytest.raises(
             interpreters.ExecutionFailed,
             match="does not support loading in subinterpreters",
@@ -407,6 +412,11 @@ def test_import_in_subinterpreter_before_main():
 
 @pytest.mark.skipif(
     sys.platform.startswith("emscripten"), reason="Requires loadable modules"
+)
+@pytest.mark.xfail(
+    env.MUSLLINUX,
+    reason="Flaky on musllinux, see also: https://github.com/pybind/pybind11/pull/5972#discussion_r2755283335",
+    strict=False,
 )
 @pytest.mark.skipif(not CONCURRENT_INTERPRETERS_SUPPORT, reason="Requires 3.14.0b3+")
 def test_import_in_subinterpreter_concurrently():

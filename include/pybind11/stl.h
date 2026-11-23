@@ -79,13 +79,25 @@ inline bool object_is_instance_with_one_of_tp_names(PyObject *obj,
     if (PyType_Check(obj)) {
         return false;
     }
-    const char *obj_tp_name = Py_TYPE(obj)->tp_name;
-    for (const auto *tp_name : tp_names) {
-        if (std::strcmp(obj_tp_name, tp_name) == 0) {
-            return true;
-        }
-    }
-    return false;
+    // A user-defined class can have the same name without being iterable.
+    return tp_name_is_one_of(Py_TYPE(obj), tp_names) && PyIterable_Check(obj);
+}
+
+inline bool object_is_generator(PyObject *obj) {
+#if defined(Py_LIMITED_API)
+    // Exact type check, like PyGen_Check(): a user class named `generator` must not match.
+    // The import can release the GIL, so a plain function-local static could deadlock.
+    PYBIND11_CONSTINIT static gil_safe_call_once_and_store<PyTypeObject *> storage;
+    return Py_TYPE(obj)
+           == storage
+                  .call_once_and_store_result([] {
+                      return reinterpret_cast<PyTypeObject *>(
+                          object(module_::import("types").attr("GeneratorType")).release().ptr());
+                  })
+                  .get_stored();
+#else
+    return PyGen_Check(obj) != 0;
+#endif
 }
 
 inline bool object_is_convertible_to_std_vector(const handle &src) {
@@ -94,7 +106,7 @@ inline bool object_is_convertible_to_std_vector(const handle &src) {
         return !PyUnicode_Check(src.ptr()) && !PyBytes_Check(src.ptr());
     }
     // Allow generators, set/frozenset and several common iterable types.
-    return (PyGen_Check(src.ptr()) != 0) || (PyAnySet_Check(src.ptr()) != 0)
+    return object_is_generator(src.ptr()) || (PyAnySet_Check(src.ptr()) != 0)
            || object_is_instance_with_one_of_tp_names(
                src.ptr(), {"dict_keys", "dict_values", "dict_items", "map", "zip"});
 }
@@ -155,10 +167,47 @@ constexpr forwarded_type<T, U> forward_like(U &&u) {
 template <typename C>
 using has_reserve_method = std::is_same<decltype(std::declval<C>().reserve(0)), void>;
 
+// Provides the type_caster for each element that a container type_caster loads. The element
+// type_casters stay alive with this object only if the elements refer to them, for example the
+// elements of `std::vector<const char *>`.
+template <typename T, bool Keep = cast_refers_to_caster<T>::value>
+class element_casters {
+public:
+    struct slot {
+        // Value-initialized, as the kept type_casters are.
+        explicit slot(element_casters &) : caster() {}
+        make_caster<T> caster;
+    };
+    void clear() {}
+};
+
+template <typename T>
+class element_casters<T, true> {
+public:
+    struct slot {
+        explicit slot(element_casters &owner) : caster(owner.add()) {}
+        make_caster<T> &caster;
+    };
+    void clear() { kept.clear(); }
+
+    element_casters() = default;
+    // Not copyable: the loaded elements refer to the type_casters of the original.
+    element_casters(element_casters &&) = default;
+    element_casters &operator=(element_casters &&) = default;
+
+private:
+    make_caster<T> &add() {
+        kept.emplace_back();
+        return kept.back();
+    }
+    std::list<make_caster<T>> kept; // The elements refer to the nodes, which do not move.
+};
+
 template <typename Type, typename Key>
 struct set_caster {
     using type = Type;
     using key_conv = make_caster<Key>;
+    static constexpr bool refers_to_caster = cast_refers_to_caster<Key>::value;
 
 private:
     template <typename T = Type, enable_if_t<has_reserve_method<T>::value, int> = 0>
@@ -167,9 +216,13 @@ private:
     }
     void reserve_maybe(const anyset &, void *) {}
 
+    element_casters<Key> key_casters;
+
     bool convert_iterable(const iterable &itbl, bool convert) {
+        key_casters.clear();
         for (const auto &it : itbl) {
-            key_conv conv;
+            typename element_casters<Key>::slot slot(key_casters);
+            key_conv &conv = slot.caster;
             if (!conv.load(it, convert)) {
                 return false;
             }
@@ -226,8 +279,13 @@ template <typename Type, typename Key, typename Value>
 struct map_caster {
     using key_conv = make_caster<Key>;
     using value_conv = make_caster<Value>;
+    static constexpr bool refers_to_caster
+        = any_of<cast_refers_to_caster<Key>, cast_refers_to_caster<Value>>::value;
 
 private:
+    element_casters<Key> key_casters;
+    element_casters<Value> value_casters;
+
     template <typename T = Type, enable_if_t<has_reserve_method<T>::value, int> = 0>
     void reserve_maybe(const dict &d, Type *) {
         value.reserve(d.size());
@@ -236,10 +294,14 @@ private:
 
     bool convert_elements(const dict &d, bool convert) {
         value.clear();
+        key_casters.clear();
+        value_casters.clear();
         reserve_maybe(d, &value);
         for (const auto &it : d) {
-            key_conv kconv;
-            value_conv vconv;
+            typename element_casters<Key>::slot kslot(key_casters);
+            typename element_casters<Value>::slot vslot(value_casters);
+            key_conv &kconv = kslot.caster;
+            value_conv &vconv = vslot.caster;
             if (!kconv.load(it.first.ptr(), convert) || !vconv.load(it.second.ptr(), convert)) {
                 return false;
             }
@@ -298,6 +360,7 @@ public:
 template <typename Type, typename Value>
 struct list_caster {
     using value_conv = make_caster<Value>;
+    static constexpr bool refers_to_caster = cast_refers_to_caster<Value>::value;
 
     bool load(handle src, bool convert) {
         if (!object_is_convertible_to_std_vector(src)) {
@@ -318,6 +381,8 @@ struct list_caster {
     }
 
 private:
+    element_casters<Value> value_casters;
+
     template <typename T = Type, enable_if_t<has_reserve_method<T>::value, int> = 0>
     void reserve_maybe(const sequence &s, Type *) {
         value.reserve(s.size());
@@ -327,9 +392,11 @@ private:
     bool convert_elements(handle seq, bool convert) {
         auto s = reinterpret_borrow<sequence>(seq);
         value.clear();
+        value_casters.clear();
         reserve_maybe(s, &value);
         for (const auto &it : seq) {
-            value_conv conv;
+            typename element_casters<Value>::slot slot(value_casters);
+            value_conv &conv = slot.caster;
             if (!conv.load(it, convert)) {
                 return false;
             }
@@ -352,7 +419,7 @@ public:
             if (!value_) {
                 return handle();
             }
-            PyList_SET_ITEM(l.ptr(), index++, value_.release().ptr()); // steals a reference
+            list_set_item(l.ptr(), index++, value_.release().ptr()); // steals a reference
         }
         return l.release();
     }
@@ -385,26 +452,36 @@ ArrayType vector_to_array(V &&v) {
 template <typename ArrayType, typename Value, bool Resizable, size_t Size = 0>
 struct array_caster {
     using value_conv = make_caster<Value>;
+    static constexpr bool refers_to_caster = cast_refers_to_caster<Value>::value;
 
 private:
     std::unique_ptr<ArrayType> value;
+    element_casters<Value> value_casters;
+
+    // Both `convert_elements` overloads index `l` up to a size that is determined only once,
+    // rather than iterating over `l`: the accesses stay in bounds even if the length of `l`
+    // changes underneath (e.g. if another thread resizes a list in a free-threaded build).
 
     template <bool R = Resizable, enable_if_t<R, int> = 0>
     bool convert_elements(handle seq, bool convert) {
         auto l = reinterpret_borrow<sequence>(seq);
+        const size_t size = l.size();
         value.reset(new ArrayType{});
         // Using `resize` to preserve the behavior exactly as it was before PR #5305
         // For the `resize` to work, `Value` must be default constructible.
         // For `std::valarray`, this is a requirement:
         // https://en.cppreference.com/w/cpp/named_req/NumericType
-        value->resize(l.size());
-        size_t ctr = 0;
-        for (const auto &it : l) {
-            value_conv conv;
-            if (!conv.load(it, convert)) {
+        value->resize(size);
+        value_casters.clear();
+        for (size_t i = 0; i < size; i++) {
+            // Constructed before the item is fetched.
+            typename element_casters<Value>::slot slot(value_casters);
+            value_conv &conv = slot.caster;
+            const object item = l[i]; // Keeps the item alive while `conv` is in use.
+            if (!conv.load(item, convert)) {
                 return false;
             }
-            (*value)[ctr++] = cast_op<Value &&>(std::move(conv));
+            (*value)[i] = cast_op<Value &&>(std::move(conv));
         }
         return true;
     }
@@ -412,7 +489,8 @@ private:
     template <bool R = Resizable, enable_if_t<!R, int> = 0>
     bool convert_elements(handle seq, bool convert) {
         auto l = reinterpret_borrow<sequence>(seq);
-        if (l.size() != Size) {
+        const size_t size = l.size();
+        if (size != Size) {
             return false;
         }
         // The `temp` storage is needed to support `Value` types that are not
@@ -421,10 +499,14 @@ private:
         // because the compile time overhead for the specializations is deemed
         // more significant than the runtime overhead for the `temp` storage.
         std::vector<Value> temp;
-        temp.reserve(l.size());
-        for (auto it : l) {
-            value_conv conv;
-            if (!conv.load(it, convert)) {
+        temp.reserve(size);
+        value_casters.clear();
+        for (size_t i = 0; i < size; i++) {
+            // Constructed before the item is fetched.
+            typename element_casters<Value>::slot slot(value_casters);
+            value_conv &conv = slot.caster;
+            const object item = l[i]; // Keeps the item alive while `conv` is in use.
+            if (!conv.load(item, convert)) {
                 return false;
             }
             temp.emplace_back(cast_op<Value &&>(std::move(conv)));
@@ -462,7 +544,7 @@ public:
             if (!value_) {
                 return handle();
             }
-            PyList_SET_ITEM(l.ptr(), index++, value_.release().ptr()); // steals a reference
+            list_set_item(l.ptr(), index++, value_.release().ptr()); // steals a reference
         }
         return l.release();
     }
@@ -528,6 +610,7 @@ struct type_caster<std::unordered_map<Key, Value, Hash, Equal, Alloc>>
 template <typename Type, typename Value = typename Type::value_type>
 struct optional_caster {
     using value_conv = make_caster<Value>;
+    static constexpr bool refers_to_caster = cast_refers_to_caster<Value>::value;
 
     template <typename T>
     static handle cast(T &&src, return_value_policy policy, handle parent) {
@@ -548,7 +631,9 @@ struct optional_caster {
         if (src.is_none()) {
             return true; // default-constructed value is already empty
         }
-        value_conv inner_caster;
+        value_casters.clear();
+        typename element_casters<Value>::slot slot(value_casters);
+        value_conv &inner_caster = slot.caster;
         if (!inner_caster.load(src, convert)) {
             return false;
         }
@@ -558,6 +643,9 @@ struct optional_caster {
     }
 
     PYBIND11_TYPE_CASTER(Type, value_conv::name | make_caster<none>::name);
+
+private:
+    element_casters<Value> value_casters;
 };
 
 #if defined(PYBIND11_HAS_OPTIONAL)
@@ -610,14 +698,21 @@ struct variant_caster;
 template <template <typename...> class V, typename... Ts>
 struct variant_caster<V<Ts...>> {
     static_assert(sizeof...(Ts) > 0, "Variant must consist of at least one alternative.");
+    static constexpr bool refers_to_caster = any_of<cast_refers_to_caster<Ts>...>::value;
 
     template <typename U, typename... Us>
     bool load_alternative(handle src, bool convert, type_list<U, Us...>) {
-        auto caster = make_caster<U>();
-        if (caster.load(src, convert)) {
-            value = cast_op<U>(std::move(caster));
-            return true;
+        auto &casters = std::get<sizeof...(Ts) - sizeof...(Us) - 1>(alternative_casters);
+        casters.clear();
+        {
+            typename element_casters<U>::slot slot(casters);
+            make_caster<U> &caster = slot.caster;
+            if (caster.load(src, convert)) {
+                value = cast_op<U>(std::move(caster));
+                return true;
+            }
         }
+        casters.clear(); // Do not keep the type_caster of a rejected alternative.
         return load_alternative(src, convert, type_list<Us...>{});
     }
 
@@ -642,6 +737,9 @@ struct variant_caster<V<Ts...>> {
 
     using Type = V<Ts...>;
     PYBIND11_TYPE_CASTER(Type, ::pybind11::detail::union_concat(make_caster<Ts>::name...));
+
+private:
+    std::tuple<element_casters<Ts>...> alternative_casters;
 };
 
 #if defined(PYBIND11_HAS_VARIANT)

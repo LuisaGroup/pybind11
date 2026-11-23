@@ -39,44 +39,129 @@
 /// further ABI-incompatible changes may be made before the ABI is officially
 /// changed to the new version.
 #ifndef PYBIND11_INTERNALS_VERSION
-#    define PYBIND11_INTERNALS_VERSION 11
+#    define PYBIND11_INTERNALS_VERSION 12
 #endif
 
-#if PYBIND11_INTERNALS_VERSION < 11
-#    error "PYBIND11_INTERNALS_VERSION 11 is the minimum for all platforms for pybind11v3."
+#if PYBIND11_INTERNALS_VERSION < 12
+#    error "PYBIND11_INTERNALS_VERSION 12 is the minimum for all platforms for pybind11 v3.1.0"
+#endif
+
+#if defined(PYBIND11_PRECOMPILED)
+// PYBIND11_PRECOMPILED_CONFIG_CHECK names a do-nothing function defined in the precompiled
+// pybind11 library. The identifier encodes the configuration flags, and its argument encodes
+// the numeric limited API target that must match between the library and the modules linking it.
+// PYBIND11_MODULE calls it, so a mismatch (or a missing library) surfaces as one readable
+// undefined symbol at link time instead of many unrelated ones at run time. If you add a
+// configuration macro that changes the code in the -inl.h files, encode it here, add it to the
+// list in docs/compiling.rst, and add it to tools/check_inl_headers.py.
+#    if defined(Py_GIL_DISABLED)
+#        define PYBIND11_PRECOMPILED_CFG_GD 1
+#    else
+#        define PYBIND11_PRECOMPILED_CFG_GD 0
+#    endif
+#    if defined(PYBIND11_SIMPLE_GIL_MANAGEMENT)
+#        define PYBIND11_PRECOMPILED_CFG_SG 1
+#    else
+#        define PYBIND11_PRECOMPILED_CFG_SG 0
+#    endif
+#    if defined(PYBIND11_DETAILED_ERROR_MESSAGES)
+#        define PYBIND11_PRECOMPILED_CFG_DE 1
+#    else
+#        define PYBIND11_PRECOMPILED_CFG_DE 0
+#    endif
+#    if defined(PYBIND11_HAS_SUBINTERPRETER_SUPPORT)
+#        define PYBIND11_PRECOMPILED_CFG_SI 1
+#    else
+#        define PYBIND11_PRECOMPILED_CFG_SI 0
+#    endif
+#    if defined(PYBIND11_BACKWARD_COMPATIBILITY_TP_DICTOFFSET)
+#        define PYBIND11_PRECOMPILED_CFG_TD 1
+#    else
+#        define PYBIND11_PRECOMPILED_CFG_TD 0
+#    endif
+#    if defined(Py_LIMITED_API)
+#        define PYBIND11_PRECOMPILED_CFG_LA 1
+#    else
+#        define PYBIND11_PRECOMPILED_CFG_LA 0
+#    endif
+#    if PYBIND11_TYPE_CREATION_VIA_SPEC
+#        define PYBIND11_PRECOMPILED_CFG_TS 1
+#    else
+#        define PYBIND11_PRECOMPILED_CFG_TS 0
+#    endif
+// PYBIND11_CONCAT does not macro-expand its arguments (## suppresses expansion).
+#    define PYBIND11_PRECOMPILED_CONFIG_NAME_(v, gd, sg, de, si, td, la, ts)                      \
+        pybind11_precompiled_config_v##v##_gd##gd##_sg##sg##_de##de##_si##si##_td##td##_la##la##_ts##ts
+#    define PYBIND11_PRECOMPILED_CONFIG_NAME(v, gd, sg, de, si, td, la, ts)                       \
+        PYBIND11_PRECOMPILED_CONFIG_NAME_(v, gd, sg, de, si, td, la, ts)
+#    define PYBIND11_PRECOMPILED_CONFIG_CHECK                                                     \
+        PYBIND11_PRECOMPILED_CONFIG_NAME(PYBIND11_INTERNALS_VERSION,                              \
+                                         PYBIND11_PRECOMPILED_CFG_GD,                             \
+                                         PYBIND11_PRECOMPILED_CFG_SG,                             \
+                                         PYBIND11_PRECOMPILED_CFG_DE,                             \
+                                         PYBIND11_PRECOMPILED_CFG_SI,                             \
+                                         PYBIND11_PRECOMPILED_CFG_TD,                             \
+                                         PYBIND11_PRECOMPILED_CFG_LA,                             \
+                                         PYBIND11_PRECOMPILED_CFG_TS)
+#    define PYBIND11_PRECOMPILED_CONFIG_GUARD                                                     \
+        ::pybind11::detail::PYBIND11_PRECOMPILED_CONFIG_CHECK({});
+#else
+#    define PYBIND11_PRECOMPILED_CONFIG_GUARD
 #endif
 
 PYBIND11_NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
+
+#if defined(PYBIND11_PRECOMPILED)
+PYBIND11_NAMESPACE_BEGIN(detail)
+// Use the numeric value in the signature so equivalent hexadecimal/decimal spellings match.
+#    if defined(Py_LIMITED_API)
+using precompiled_limited_api = std::integral_constant<unsigned long, Py_LIMITED_API>;
+#    else
+using precompiled_limited_api = std::integral_constant<unsigned long, 0>;
+#    endif
+void PYBIND11_PRECOMPILED_CONFIG_CHECK(precompiled_limited_api);
+PYBIND11_NAMESPACE_END(detail)
+#endif
 
 using ExceptionTranslator = void (*)(std::exception_ptr);
 
 // The old Python Thread Local Storage (TLS) API is deprecated in Python 3.7 in favor of the new
 // Thread Specific Storage (TSS) API.
-// Avoid unnecessary allocation of `Py_tss_t`, since we cannot use
-// `Py_LIMITED_API` anyway.
-#define PYBIND11_TLS_KEY_REF Py_tss_t &
-#if defined(__clang__)
-#    define PYBIND11_TLS_KEY_INIT(var)                                                            \
-        _Pragma("clang diagnostic push")                                         /**/             \
-            _Pragma("clang diagnostic ignored \"-Wmissing-field-initializers\"") /**/             \
-            Py_tss_t var                                                                          \
-            = Py_tss_NEEDS_INIT;                                                                  \
-        _Pragma("clang diagnostic pop")
-#elif defined(__GNUC__) && !defined(__INTEL_COMPILER)
-#    define PYBIND11_TLS_KEY_INIT(var)                                                            \
-        _Pragma("GCC diagnostic push")                                         /**/               \
-            _Pragma("GCC diagnostic ignored \"-Wmissing-field-initializers\"") /**/               \
-            Py_tss_t var                                                                          \
-            = Py_tss_NEEDS_INIT;                                                                  \
-        _Pragma("GCC diagnostic pop")
+// `Py_tss_t` is opaque under `Py_LIMITED_API`, so the key is heap-allocated there; otherwise it
+// is embedded to avoid the allocation.
+#if defined(Py_LIMITED_API)
+using tss_key_ptr = Py_tss_t *; // lets PYBIND11_TLS_KEY_INIT(mutable key_) parse
+#    define PYBIND11_TLS_KEY_REF Py_tss_t *
+#    define PYBIND11_TLS_KEY_INIT(var) tss_key_ptr var = nullptr;
+#    define PYBIND11_TLS_KEY_CREATE(var)                                                          \
+        (((var) = PyThread_tss_alloc()) != nullptr && PyThread_tss_create(var) == 0)
+#    define PYBIND11_TLS_GET_VALUE(key) PyThread_tss_get(key)
+#    define PYBIND11_TLS_REPLACE_VALUE(key, value) PyThread_tss_set((key), (value))
+#    define PYBIND11_TLS_DELETE_VALUE(key) PyThread_tss_set((key), nullptr)
+#    define PYBIND11_TLS_FREE(key) PyThread_tss_free(key)
 #else
-#    define PYBIND11_TLS_KEY_INIT(var) Py_tss_t var = Py_tss_NEEDS_INIT;
+#    define PYBIND11_TLS_KEY_REF Py_tss_t &
+#    if defined(__clang__)
+#        define PYBIND11_TLS_KEY_INIT(var)                                                        \
+            _Pragma("clang diagnostic push")                                         /**/         \
+                _Pragma("clang diagnostic ignored \"-Wmissing-field-initializers\"") /**/         \
+                Py_tss_t var = Py_tss_NEEDS_INIT;                                                 \
+            _Pragma("clang diagnostic pop")
+#    elif defined(__GNUC__) && !defined(__INTEL_COMPILER)
+#        define PYBIND11_TLS_KEY_INIT(var)                                                        \
+            _Pragma("GCC diagnostic push")                                         /**/           \
+                _Pragma("GCC diagnostic ignored \"-Wmissing-field-initializers\"") /**/           \
+                Py_tss_t var = Py_tss_NEEDS_INIT;                                                 \
+            _Pragma("GCC diagnostic pop")
+#    else
+#        define PYBIND11_TLS_KEY_INIT(var) Py_tss_t var = Py_tss_NEEDS_INIT;
+#    endif
+#    define PYBIND11_TLS_KEY_CREATE(var) (PyThread_tss_create(&(var)) == 0)
+#    define PYBIND11_TLS_GET_VALUE(key) PyThread_tss_get(&(key))
+#    define PYBIND11_TLS_REPLACE_VALUE(key, value) PyThread_tss_set(&(key), (value))
+#    define PYBIND11_TLS_DELETE_VALUE(key) PyThread_tss_set(&(key), nullptr)
+#    define PYBIND11_TLS_FREE(key) PyThread_tss_delete(&(key))
 #endif
-#define PYBIND11_TLS_KEY_CREATE(var) (PyThread_tss_create(&(var)) == 0)
-#define PYBIND11_TLS_GET_VALUE(key) PyThread_tss_get(&(key))
-#define PYBIND11_TLS_REPLACE_VALUE(key, value) PyThread_tss_set(&(key), (value))
-#define PYBIND11_TLS_DELETE_VALUE(key) PyThread_tss_set(&(key), nullptr)
-#define PYBIND11_TLS_FREE(key) PyThread_tss_delete(&(key))
 
 /// A smart-pointer-like wrapper around a thread-specific value. get/set of the pointer applies to
 /// the current thread only.
@@ -100,10 +185,14 @@ public:
         // Neither of those have anything to do with CPython internals. PyMem_RawFree *requires*
         // that the `key` be allocated with the CPython allocator (as it is by
         // PyThread_tss_create).
-        // However, in GraalPy (as of v24.2 or older), TSS is implemented by Java and this call
+        // However, in GraalPy (as of v25.0 or older), TSS is implemented by Java and this call
         // requires a living Python interpreter.
 #ifdef GRAALVM_PYTHON
+#    if PY_VERSION_HEX >= 0x030D0000
+        if (Py_IsInitialized() == 0 || Py_IsFinalizing() != 0) {
+#    else
         if (Py_IsInitialized() == 0 || _Py_IsFinalizing() != 0) {
+#    endif
             return;
         }
 #endif
@@ -138,42 +227,48 @@ PYBIND11_NAMESPACE_BEGIN(detail)
 #define PYBIND11_DUMMY_MODULE_NAME "pybind11_builtins"
 
 // Forward declarations
-inline PyTypeObject *make_static_property_type();
-inline PyTypeObject *make_default_metaclass();
-inline PyObject *make_object_base_type(PyTypeObject *metaclass);
-inline void translate_exception(std::exception_ptr p);
+PyTypeObject *make_static_property_type();
+PyTypeObject *make_default_metaclass();
+PyObject *make_object_base_type(PyTypeObject *metaclass);
+#if defined(Py_LIMITED_API)
+PyTypeObject *make_instancemethod_type();
+#endif
+void translate_exception(std::exception_ptr p);
 
+// The stable ABI has no function that returns the current thread state without a check.
+#if !defined(Py_LIMITED_API)
 inline PyThreadState *get_thread_state_unchecked() {
-#if defined(PYPY_VERSION) || defined(GRAALVM_PYTHON)
+#    if defined(PYPY_VERSION) || defined(GRAALVM_PYTHON)
     return PyThreadState_GET();
-#elif PY_VERSION_HEX < 0x030D0000
+#    elif PY_VERSION_HEX < 0x030D0000
     return _PyThreadState_UncheckedGet();
-#else
+#    else
     return PyThreadState_GetUnchecked();
+#    endif
+}
 #endif
-}
 
-inline PyInterpreterState *get_interpreter_state_unchecked() {
-    auto *tstate = get_thread_state_unchecked();
-    return tstate ? tstate->interp : nullptr;
-}
-
-inline object get_python_state_dict() {
-    object state_dict;
-#if defined(PYPY_VERSION) || defined(GRAALVM_PYTHON)
-    state_dict = reinterpret_borrow<object>(PyEval_GetBuiltins());
+inline PyInterpreterState *get_interpreter(PyThreadState *tstate) {
+#if defined(PYPY_VERSION_NUM) && PYPY_VERSION_NUM < 0x08000000
+    // Missing in some PyPy 7.x releases (e.g. 7.3.19).
+    return tstate->interp;
 #else
-    auto *istate = get_interpreter_state_unchecked();
-    if (istate) {
-        state_dict = reinterpret_borrow<object>(PyInterpreterState_GetDict(istate));
-    }
+    return PyThreadState_GetInterpreter(tstate);
 #endif
-    if (!state_dict) {
-        raise_from(PyExc_SystemError, "pybind11::detail::get_python_state_dict() FAILED");
-        throw error_already_set();
-    }
-    return state_dict;
 }
+
+// Returns the current interpreter. Under Py_LIMITED_API, requires an attached thread state;
+// otherwise, returns nullptr if no thread state is attached.
+inline PyInterpreterState *get_current_interpreter_state() {
+#if defined(Py_LIMITED_API)
+    return PyInterpreterState_Get();
+#else
+    auto *tstate = get_thread_state_unchecked();
+    return tstate ? get_interpreter(tstate) : nullptr;
+#endif
+}
+
+object get_python_state_dict();
 
 // Python loads modules by default with dlopen with the RTLD_LOCAL flag; under libc++ and possibly
 // other STLs, this means `typeid(A)` from one module won't equal `typeid(A)` from another module
@@ -191,7 +286,7 @@ inline bool same_type(const std::type_info &lhs, const std::type_info &rhs) {
 }
 
 struct type_hash {
-    size_t operator()(const std::type_index &t) const {
+    size_t operator()(const std::type_index &t) const noexcept {
         size_t hash = 5381;
         const char *ptr = t.name();
         while (auto c = static_cast<unsigned char>(*ptr++)) {
@@ -202,7 +297,7 @@ struct type_hash {
 };
 
 struct type_equal_to {
-    bool operator()(const std::type_index &lhs, const std::type_index &rhs) const {
+    bool operator()(const std::type_index &lhs, const std::type_index &rhs) const noexcept {
         return lhs.name() == rhs.name() || std::strcmp(lhs.name(), rhs.name()) == 0;
     }
 };
@@ -218,7 +313,7 @@ template <typename value_type>
 using type_map = std::unordered_map<std::type_index, value_type, type_hash, type_equal_to>;
 
 struct override_hash {
-    size_t operator()(const std::pair<const PyObject *, const char *> &v) const {
+    size_t operator()(const std::pair<const PyObject *, const char *> &v) const noexcept {
         size_t value = std::hash<const void *>()(v.first);
         value ^= std::hash<const void *>()(v.second) + 0x9e3779b9 + (value << 6) + (value >> 2);
         return value;
@@ -227,7 +322,34 @@ struct override_hash {
 
 using instance_map = std::unordered_multimap<const void *, instance *>;
 
-#ifdef Py_GIL_DISABLED
+#if defined(PYBIND11_OPAQUE_PYOBJECT)
+// PyMutex is not part of the stable ABI, but critical sections are (3.15+). The lock is the
+// per-object mutex of a plain `object()`, which is kept for the lifetime of the process.
+class pymutex {
+    friend class pycritical_section;
+    PyObject *lock_object;
+
+public:
+    pymutex()
+        : lock_object(PyObject_CallNoArgs(reinterpret_cast<PyObject *>(&PyBaseObject_Type))) {
+        if (lock_object == nullptr) {
+            throw error_already_set();
+        }
+    }
+};
+
+class pycritical_section {
+    PyCriticalSection cs{};
+
+public:
+    explicit pycritical_section(pymutex &m) { PyCriticalSection_Begin(&cs, m.lock_object); }
+    ~pycritical_section() { PyCriticalSection_End(&cs); }
+    pycritical_section(const pycritical_section &) = delete;
+    pycritical_section &operator=(const pycritical_section &) = delete;
+    pycritical_section(pycritical_section &&) = delete;
+    pycritical_section &operator=(pycritical_section &&) = delete;
+};
+#elif defined(Py_GIL_DISABLED)
 // Wrapper around PyMutex to provide BasicLockable semantics
 class pymutex {
     friend class pycritical_section;
@@ -241,13 +363,27 @@ public:
 
 class pycritical_section {
     pymutex &mutex;
+#    if PY_VERSION_HEX >= 0x030E00C1 // 3.14.0rc1
     PyCriticalSection cs;
+#    endif
 
 public:
     explicit pycritical_section(pymutex &m) : mutex(m) {
+        // PyCriticalSection_BeginMutex was added in Python 3.15.0a1 and backported to 3.14.0rc1
+#    if PY_VERSION_HEX >= 0x030E00C1 // 3.14.0rc1
         PyCriticalSection_BeginMutex(&cs, &mutex.mutex);
+#    else
+        // Fall back to direct mutex locking for older free-threaded Python versions
+        mutex.lock();
+#    endif
     }
-    ~pycritical_section() { PyCriticalSection_End(&cs); }
+    ~pycritical_section() {
+#    if PY_VERSION_HEX >= 0x030E00C1 // 3.14.0rc1
+        PyCriticalSection_End(&cs);
+#    else
+        mutex.unlock();
+#    endif
+    }
 
     // Non-copyable and non-movable to prevent double-unlock
     pycritical_section(const pycritical_section &) = delete;
@@ -255,7 +391,9 @@ public:
     pycritical_section(pycritical_section &&) = delete;
     pycritical_section &operator=(pycritical_section &&) = delete;
 };
+#endif
 
+#ifdef Py_GIL_DISABLED
 // Instance map shards are used to reduce mutex contention in free-threaded Python.
 struct instance_map_shard {
     instance_map registered_instances;
@@ -267,19 +405,7 @@ struct instance_map_shard {
 static_assert(sizeof(instance_map_shard) % 64 == 0,
               "instance_map_shard size is not a multiple of 64 bytes");
 
-inline uint64_t round_up_to_next_pow2(uint64_t x) {
-    // Round-up to the next power of two.
-    // See https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
-    x--;
-    x |= (x >> 1);
-    x |= (x >> 2);
-    x |= (x >> 4);
-    x |= (x >> 8);
-    x |= (x >> 16);
-    x |= (x >> 32);
-    x++;
-    return x;
-}
+uint64_t round_up_to_next_pow2(uint64_t x);
 #endif
 
 class loader_life_support;
@@ -323,6 +449,11 @@ struct internals {
     PyTypeObject *static_property_type = nullptr;
     PyTypeObject *default_metaclass = nullptr;
     PyObject *instance_base = nullptr;
+#if defined(Py_LIMITED_API)
+    // Replacement for PyInstanceMethod_Type, which is not part of the stable ABI. Shared so
+    // that every module recognizes the methods of every other module's classes.
+    PyTypeObject *instancemethod_type = nullptr;
+#endif
     // Unused if PYBIND11_SIMPLE_GIL_MANAGEMENT is defined:
     thread_specific_storage<PyThreadState> tstate;
 #if PYBIND11_INTERNALS_VERSION <= 11
@@ -335,7 +466,11 @@ struct internals {
 
     internals()
         : static_property_type(make_static_property_type()),
-          default_metaclass(make_default_metaclass()), istate(get_interpreter_state_unchecked()) {
+          default_metaclass(make_default_metaclass()),
+#if defined(Py_LIMITED_API)
+          instancemethod_type(make_instancemethod_type()),
+#endif
+          istate(get_current_interpreter_state()) {
         tstate.set(nullptr); // See PR #5870
         registered_exception_translators.push_front(&translate_exception);
 #ifdef Py_GIL_DISABLED
@@ -397,8 +532,8 @@ struct type_info {
     memory::get_guarded_delete_fn get_memory_guarded_delete = memory::get_guarded_delete;
     get_trampoline_self_life_support_fn get_trampoline_self_life_support = nullptr;
 
-    std::vector<PyObject *(*) (PyObject *, PyTypeObject *)> implicit_conversions;
-    std::vector<std::pair<const std::type_info *, void *(*) (void *)>> implicit_casts;
+    std::vector<PyObject *(*)(PyObject *, PyTypeObject *)> implicit_conversions;
+    std::vector<std::pair<const std::type_info *, void *(*)(void *)>> implicit_casts;
     std::vector<bool (*)(PyObject *, void *&)> *direct_conversions;
     buffer_info *(*get_buffer)(PyObject *, void *) = nullptr;
     void *get_buffer_data = nullptr;
@@ -447,21 +582,33 @@ struct native_enum_record {
     static const char *attribute_name() { return "__pybind11_native_enum__"; }
 };
 
+// Modules built for the Python stable ABI (Py_LIMITED_API) use a different `internals` layout
+// (opaque TSS keys, different type-object access), so they must not share internals with
+// regular modules in the same process. The tag keeps the two universes apart. It is deliberately
+// not part of PYBIND11_PLATFORM_ABI_ID: the C++ ABI is the same, so the cpp_conduit protocol
+// still bridges the two.
+#if defined(PYBIND11_OPAQUE_PYOBJECT)
+#    define PYBIND11_INTERNALS_SABI_TAG "_abi3t" // abi3t modules also load on GIL builds
+#elif defined(Py_LIMITED_API)
+#    define PYBIND11_INTERNALS_SABI_TAG "_abi3"
+#else
+#    define PYBIND11_INTERNALS_SABI_TAG ""
+#endif
+
 #define PYBIND11_INTERNALS_ID                                                                     \
     "__pybind11_internals_v" PYBIND11_TOSTRING(PYBIND11_INTERNALS_VERSION)                        \
-        PYBIND11_COMPILER_TYPE_LEADING_UNDERSCORE PYBIND11_PLATFORM_ABI_ID "__"
+        PYBIND11_COMPILER_TYPE_LEADING_UNDERSCORE                                                 \
+            PYBIND11_PLATFORM_ABI_ID PYBIND11_INTERNALS_SABI_TAG "__"
 
 #define PYBIND11_MODULE_LOCAL_ID                                                                  \
     "__pybind11_module_local_v" PYBIND11_TOSTRING(PYBIND11_INTERNALS_VERSION)                     \
-        PYBIND11_COMPILER_TYPE_LEADING_UNDERSCORE PYBIND11_PLATFORM_ABI_ID "__"
+        PYBIND11_COMPILER_TYPE_LEADING_UNDERSCORE                                                 \
+            PYBIND11_PLATFORM_ABI_ID PYBIND11_INTERNALS_SABI_TAG "__"
 
 /// We use this to figure out if there are or have been multiple subinterpreters active at any
 /// point. This must never go from true to false while any interpreter may be running in any
 /// thread!
-inline std::atomic_bool &has_seen_non_main_interpreter() {
-    static std::atomic_bool multi(false);
-    return multi;
-}
+std::atomic_bool &has_seen_non_main_interpreter();
 
 template <class T,
           enable_if_t<std::is_same<std::nested_exception, remove_cvref_t<T>>::value, int> = 0>
@@ -483,88 +630,12 @@ bool handle_nested_exception(const T &exc, const std::exception_ptr &p) {
     return false;
 }
 
-inline bool raise_err(PyObject *exc_type, const char *msg) {
-    if (PyErr_Occurred()) {
-        raise_from(exc_type, msg);
-        return true;
-    }
-    set_error(exc_type, msg);
-    return false;
-}
+bool raise_err(PyObject *exc_type, const char *msg);
 
-inline void translate_exception(std::exception_ptr p) {
-    if (!p) {
-        return;
-    }
-    try {
-        std::rethrow_exception(p);
-    } catch (error_already_set &e) {
-        handle_nested_exception(e, p);
-        e.restore();
-        return;
-    } catch (const builtin_exception &e) {
-        // Could not use template since it's an abstract class.
-        if (const auto *nep = dynamic_cast<const std::nested_exception *>(std::addressof(e))) {
-            handle_nested_exception(*nep, p);
-        }
-        e.set_error();
-        return;
-    } catch (const std::bad_alloc &e) {
-        handle_nested_exception(e, p);
-        raise_err(PyExc_MemoryError, e.what());
-        return;
-    } catch (const std::domain_error &e) {
-        handle_nested_exception(e, p);
-        raise_err(PyExc_ValueError, e.what());
-        return;
-    } catch (const std::invalid_argument &e) {
-        handle_nested_exception(e, p);
-        raise_err(PyExc_ValueError, e.what());
-        return;
-    } catch (const std::length_error &e) {
-        handle_nested_exception(e, p);
-        raise_err(PyExc_ValueError, e.what());
-        return;
-    } catch (const std::out_of_range &e) {
-        handle_nested_exception(e, p);
-        raise_err(PyExc_IndexError, e.what());
-        return;
-    } catch (const std::range_error &e) {
-        handle_nested_exception(e, p);
-        raise_err(PyExc_ValueError, e.what());
-        return;
-    } catch (const std::overflow_error &e) {
-        handle_nested_exception(e, p);
-        raise_err(PyExc_OverflowError, e.what());
-        return;
-    } catch (const std::exception &e) {
-        handle_nested_exception(e, p);
-        raise_err(PyExc_RuntimeError, e.what());
-        return;
-    } catch (const std::nested_exception &e) {
-        handle_nested_exception(e, p);
-        raise_err(PyExc_RuntimeError, "Caught an unknown nested exception!");
-        return;
-    } catch (...) {
-        raise_err(PyExc_RuntimeError, "Caught an unknown exception!");
-        return;
-    }
-}
+// translate_exception is forward-declared near the top of this header
 
 #if !defined(__GLIBCXX__)
-inline void translate_local_exception(std::exception_ptr p) {
-    try {
-        if (p) {
-            std::rethrow_exception(p);
-        }
-    } catch (error_already_set &e) {
-        e.restore();
-        return;
-    } catch (const builtin_exception &e) {
-        e.set_error();
-        return;
-    }
-}
+void translate_local_exception(std::exception_ptr p);
 #endif
 
 // Sentinel value for the `dtor` parameter of `atomic_get_or_create_in_state_dict`.
@@ -659,6 +730,20 @@ std::pair<Payload *, bool> atomic_get_or_create_in_state_dict(const char *key,
 
 #undef PYBIND11_DTOR_USE_DELETE
 
+// Minimal lock for very short critical sections that make no Python calls. With MSVC, a
+// `std::mutex` crashes if an older `msvcp140.dll` is already loaded in the process (#6053).
+class spinlock {
+    std::atomic_flag flag_ = ATOMIC_FLAG_INIT;
+
+public:
+    void lock() {
+        while (flag_.test_and_set(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    }
+    void unlock() { flag_.clear(std::memory_order_release); }
+};
+
 template <typename InternalsType>
 class internals_pp_manager {
 public:
@@ -678,13 +763,16 @@ public:
             // internals_pp so that it can be pulled from the interpreter's state dict.  That is
             // slow, so we use the current PyThreadState to check if it is necessary.
             auto *tstate = get_thread_state_unchecked();
-            if (!tstate || tstate->interp != last_istate_tls()) {
+            if (!tstate || get_interpreter(tstate) != last_istate_tls()) {
                 gil_scoped_acquire_simple gil;
                 if (!tstate) {
                     tstate = get_thread_state_unchecked();
                 }
-                last_istate_tls() = tstate->interp;
-                internals_p_tls() = get_or_create_pp_in_state_dict();
+                // Update the cache only on success; a stale interp with a null pp would make
+                // later calls return nullptr.
+                auto *pp = get_or_create_pp_in_state_dict();
+                last_istate_tls() = get_interpreter(tstate);
+                internals_p_tls() = pp;
             }
             return internals_p_tls();
         }
@@ -713,10 +801,10 @@ public:
         if (has_seen_non_main_interpreter()) {
             auto *tstate = get_thread_state_unchecked();
             // this could be called without an active interpreter, just use what was cached
-            if (!tstate || tstate->interp == last_istate_tls()) {
+            if (!tstate || get_interpreter(tstate) == last_istate_tls()) {
                 auto tpp = internals_p_tls();
                 {
-                    std::lock_guard<std::mutex> lock(pp_set_mutex_);
+                    std::lock_guard<spinlock> lock(pp_set_lock_);
                     pps_have_created_content_.erase(tpp); // untrack deleted pp
                 }
                 delete tpp; // may call back into Python
@@ -726,7 +814,7 @@ public:
         }
 #endif
         {
-            std::lock_guard<std::mutex> lock(pp_set_mutex_);
+            std::lock_guard<spinlock> lock(pp_set_lock_);
             pps_have_created_content_.erase(internals_singleton_pp_); // untrack deleted pp
         }
         delete internals_singleton_pp_; // may call back into Python
@@ -742,7 +830,7 @@ public:
         {
             // Lock scope must not include Python calls, which may require the GIL and cause
             // deadlocks.
-            std::lock_guard<std::mutex> lock(pp_set_mutex_);
+            std::lock_guard<spinlock> lock(pp_set_lock_);
 
             if (*pp) {
                 // Already created in another thread.
@@ -814,7 +902,7 @@ private:
     // Track pointer-to-pointers whose internals have been created, to detect re-entrancy.
     // Use instance member over static due to singleton pattern of this class.
     std::unordered_set<std::unique_ptr<InternalsType> *> pps_have_created_content_;
-    std::mutex pp_set_mutex_;
+    spinlock pp_set_lock_;
 };
 
 // If We loaded the internals through `state_dict`, our `error_already_set`
@@ -825,102 +913,34 @@ private:
 // libc++ with CPython doesn't require this (types are explicitly exported)
 // libc++ with PyPy still need it, awaiting further investigation
 #if !defined(__GLIBCXX__)
-inline void check_internals_local_exception_translator(internals *internals_ptr) {
-    if (internals_ptr) {
-        for (auto et : internals_ptr->registered_exception_translators) {
-            if (et == &translate_local_exception) {
-                return;
-            }
-        }
-        internals_ptr->registered_exception_translators.push_front(&translate_local_exception);
-    }
-}
+void check_internals_local_exception_translator(internals *internals_ptr);
 #endif
 
-inline internals_pp_manager<internals> &get_internals_pp_manager() {
-#if defined(__GLIBCXX__)
-#    define ON_FETCH_FN nullptr
-#else
-#    define ON_FETCH_FN &check_internals_local_exception_translator
-#endif
-    return internals_pp_manager<internals>::get_instance(PYBIND11_INTERNALS_ID, ON_FETCH_FN);
-#undef ON_FETCH_FN
-}
+internals_pp_manager<internals> &get_internals_pp_manager();
 
 /// Return a reference to the current `internals` data
-PYBIND11_NOINLINE internals &get_internals() {
-    auto &ppmgr = get_internals_pp_manager();
-    auto &internals_ptr = *ppmgr.get_pp();
-    if (!internals_ptr) {
-        // Slow path, something needs fetched from the state dict or created
-        gil_scoped_acquire_simple gil;
-        error_scope err_scope;
-
-        ppmgr.create_pp_content_once(&internals_ptr);
-
-        if (!internals_ptr->instance_base) {
-            // This calls get_internals, so cannot be called from within the internals constructor
-            // called above because internals_ptr must be set before get_internals is called again
-            internals_ptr->instance_base = make_object_base_type(internals_ptr->default_metaclass);
-        }
-    }
-    return *internals_ptr;
-}
+internals &get_internals();
 
 /// Return the PyObject* for the internals capsule (borrowed reference).
 /// Returns nullptr if the capsule doesn't exist yet.
-inline PyObject *get_internals_capsule() {
-    auto state_dict = reinterpret_borrow<dict>(get_python_state_dict());
-    return dict_getitemstring(state_dict.ptr(), PYBIND11_INTERNALS_ID);
-}
+PyObject *get_internals_capsule();
 
 /// Return the key used for local_internals in the state dict.
 /// This function ensures a consistent key is used across all call sites within the same
 /// compilation unit. The key includes the address of a static variable to make it unique per
 /// module (DSO), matching the behavior of get_local_internals_pp_manager().
-inline const std::string &get_local_internals_key() {
-    static const std::string key
-        = PYBIND11_MODULE_LOCAL_ID + std::to_string(reinterpret_cast<uintptr_t>(&key));
-    return key;
-}
+const std::string &get_local_internals_key();
 
 /// Return the PyObject* for the local_internals capsule (borrowed reference).
 /// Returns nullptr if the capsule doesn't exist yet.
-inline PyObject *get_local_internals_capsule() {
-    const auto &key = get_local_internals_key();
-    auto state_dict = reinterpret_borrow<dict>(get_python_state_dict());
-    return dict_getitemstring(state_dict.ptr(), key.c_str());
-}
+PyObject *get_local_internals_capsule();
 
-inline void ensure_internals() {
-    pybind11::detail::get_internals_pp_manager().unref();
-#ifdef PYBIND11_HAS_SUBINTERPRETER_SUPPORT
-    if (PyInterpreterState_Get() != PyInterpreterState_Main()) {
-        has_seen_non_main_interpreter() = true;
-    }
-#endif
-    pybind11::detail::get_internals();
-}
+void ensure_internals();
 
-inline internals_pp_manager<local_internals> &get_local_internals_pp_manager() {
-    // Use the address of a static variable as part of the key, so that the value is uniquely tied
-    // to where the module is loaded in memory
-    return internals_pp_manager<local_internals>::get_instance(get_local_internals_key().c_str(),
-                                                               nullptr);
-}
+internals_pp_manager<local_internals> &get_local_internals_pp_manager();
 
 /// Works like `get_internals`, but for things which are locally registered.
-inline local_internals &get_local_internals() {
-    auto &ppmgr = get_local_internals_pp_manager();
-    auto &internals_ptr = *ppmgr.get_pp();
-    if (!internals_ptr) {
-        gil_scoped_acquire_simple gil;
-        error_scope err_scope;
-
-        ppmgr.create_pp_content_once(&internals_ptr);
-    }
-    return *internals_ptr;
-}
+local_internals &get_local_internals();
 
 #ifdef Py_GIL_DISABLED
 #    define PYBIND11_LOCK_INTERNALS(internals) pycritical_section lock((internals).mutex)
@@ -959,6 +979,8 @@ inline auto with_exception_translators(const F &cb)
               local_internals.registered_exception_translators);
 }
 
+// Stays inline even in precompiled mode: it is called on every instance-map access in
+// free-threaded builds, and an out-of-line call would block inlining and constant propagation.
 inline std::uint64_t mix64(std::uint64_t z) {
     // David Stafford's variant 13 of the MurmurHash3 finalizer popularized
     // by the SplitMix PRNG.
@@ -984,7 +1006,13 @@ inline auto with_instance_map(const void *ptr, const F &cb)
     auto idx = static_cast<size_t>(hash & internals.instance_shards_mask);
 
     auto &shard = internals.instance_shards[idx];
+#    if defined(PYBIND11_OPAQUE_PYOBJECT)
+    // A critical section is suspended while `cb` waits for another one (e.g. the internals
+    // lock): `cb` must not keep iterators or instance pointers across such calls.
+    pycritical_section lock(shard.mutex);
+#    else
     std::unique_lock<pymutex> lock(shard.mutex);
+#    endif
     return cb(shard.registered_instances);
 #else
     (void) ptr;
@@ -994,20 +1022,7 @@ inline auto with_instance_map(const void *ptr, const F &cb)
 
 // Returns the number of registered instances for testing purposes.  The result may not be
 // consistent if other threads are registering or unregistering instances concurrently.
-inline size_t num_registered_instances() {
-    auto &internals = get_internals();
-#ifdef Py_GIL_DISABLED
-    size_t count = 0;
-    for (size_t i = 0; i <= internals.instance_shards_mask; ++i) {
-        auto &shard = internals.instance_shards[i];
-        std::unique_lock<pymutex> lock(shard.mutex);
-        count += shard.registered_instances.size();
-    }
-    return count;
-#else
-    return internals.registered_instances.size();
-#endif
-}
+size_t num_registered_instances();
 
 /// Constructs a std::string with the given arguments, stores it in `internals`, and returns its
 /// `c_str()`.  Such strings objects have a long storage duration -- the internal strings are only
@@ -1029,20 +1044,10 @@ PYBIND11_NAMESPACE_END(detail)
 /// Returns a named pointer that is shared among all extension modules (using the same
 /// pybind11 version) running in the current interpreter. Names starting with underscores
 /// are reserved for internal usage. Returns `nullptr` if no matching entry was found.
-PYBIND11_NOINLINE void *get_shared_data(const std::string &name) {
-    return detail::with_internals([&](detail::internals &internals) {
-        auto it = internals.shared_data.find(name);
-        return it != internals.shared_data.end() ? it->second : nullptr;
-    });
-}
+void *get_shared_data(const std::string &name);
 
 /// Set the shared data that can be later recovered by `get_shared_data()`.
-PYBIND11_NOINLINE void *set_shared_data(const std::string &name, void *data) {
-    return detail::with_internals([&](detail::internals &internals) {
-        internals.shared_data[name] = data;
-        return data;
-    });
-}
+void *set_shared_data(const std::string &name, void *data);
 
 /// Returns a typed reference to a shared data entry (by using `get_shared_data()`) if
 /// such entry exists. Otherwise, a new object of default-constructible type `T` is
@@ -1061,3 +1066,7 @@ T &get_or_create_shared_data(const std::string &name) {
 }
 
 PYBIND11_NAMESPACE_END(PYBIND11_NAMESPACE)
+
+#ifndef PYBIND11_PRECOMPILED
+#    include "internals-inl.h" // IWYU pragma: export
+#endif

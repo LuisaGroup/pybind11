@@ -46,6 +46,23 @@ def test_dense():
     assert_equal_ref(m.dense_copy_c(m.dense_r()))
 
 
+@pytest.mark.parametrize("matrix_type", ["matrix", "const_matrix"])
+@pytest.mark.parametrize(
+    "policy",
+    [
+        "automatic",
+        "automatic_reference",
+        "take_ownership",
+        "copy",
+        "move",
+        "reference",
+        "reference_internal",
+    ],
+)
+def test_null_matrix(matrix_type, policy):
+    assert getattr(getattr(m.null_matrix, policy), matrix_type)() is None
+
+
 def test_partially_fixed():
     ref2 = np.array([[0.0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]])
     np.testing.assert_array_equal(m.partial_copy_four_rm_r(ref2), ref2)
@@ -118,6 +135,7 @@ def test_mutator_descriptors():
 
 
 def test_cpp_casting():
+    m.reset_refs()  # In case another test already changed it
     assert m.cpp_copy(m.fixed_r()) == 22.0
     assert m.cpp_copy(m.fixed_c()) == 22.0
     z = np.array([[5.0, 6], [7, 8]])
@@ -758,6 +776,41 @@ def test_sparse():
     assert_sparse_equal_ref(m.sparse_copy_c(m.sparse_c()))
     assert_sparse_equal_ref(m.sparse_copy_r(m.sparse_c()))
     assert_sparse_equal_ref(m.sparse_copy_c(m.sparse_r()))
+
+
+@pytest.mark.parametrize("layout", ["r", "c"])
+@pytest.mark.parametrize("readonly", ["data", "indices", "indptr", "all"])
+def test_sparse_readonly(layout, readonly):
+    pytest.importorskip("scipy")
+    matrix = getattr(m, f"sparse_{layout}")()
+    for name in ("data", "indices", "indptr"):
+        if readonly in (name, "all"):
+            getattr(matrix, name).flags.writeable = False
+
+    result = getattr(m, f"sparse_copy_{layout}")(matrix)
+    assert_sparse_equal_ref(result)
+    assert_sparse_equal_ref(matrix)
+    for name in ("data", "indices", "indptr"):
+        if readonly in (name, "all"):
+            assert not getattr(matrix, name).flags.writeable
+
+
+@pytest.mark.parametrize("layout", ["r", "c"])
+def test_sparse_noncanonical(layout):
+    sp = pytest.importorskip("scipy.sparse")
+    matrix_type = sp.csr_matrix if layout == "r" else sp.csc_matrix
+    # Unsorted inner indices, plus a duplicate entry (summed by scipy)
+    data = np.array([3, 1, 2, 4], dtype=np.float32)
+    indices = np.array([2, 0, 2, 1])
+    indptr = np.array([0, 3, 4, 4])
+    matrix = matrix_type((data, indices, indptr), shape=(3, 3))
+    assert not matrix.has_canonical_format
+
+    expected = matrix.toarray()
+    result = getattr(m, f"sparse_copy_{layout}")(matrix)
+    np.testing.assert_array_equal(result.toarray(), expected)
+    # The input is not modified
+    np.testing.assert_array_equal(matrix.indices, indices)
 
 
 def test_sparse_signature(doc):

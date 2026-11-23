@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import gc
 import os
-import sys
 import weakref
 
 import pytest
 
 import env
 import pybind11_tests
-from pybind11_tests import custom_type_setup as m
+
+# Not built under the stable ABI (PyHeapTypeObject is opaque there)
+m = pytest.importorskip("pybind11_tests.custom_type_setup")
 
 
 @pytest.fixture
@@ -36,6 +37,16 @@ def gc_tester():
         assert ref() is None
 
 
+@pytest.mark.skipif("env.PYPY or env.GRAALPY", reason="Cannot reliably trigger GC")
+def test_dynamic_base_custom_type_setup(gc_tester):
+    obj = m.DynamicDerived()
+    assert obj.value == 7
+    obj.dynamic = 42
+    assert obj.__dict__["dynamic"] == 42
+    obj.cycle = obj
+    gc_tester(obj)
+
+
 # PyPy does not seem to reliably garbage collect.
 @pytest.mark.skipif("env.PYPY or env.GRAALPY")
 def test_self_cycle(gc_tester):
@@ -52,10 +63,6 @@ def test_indirect_cycle(gc_tester):
     gc_tester(obj)
 
 
-@pytest.mark.skipif(
-    env.IOS or sys.platform.startswith("emscripten"),
-    reason="Requires subprocess support",
-)
 @pytest.mark.skipif("env.PYPY or env.GRAALPY")
 def test_py_cast_useable_on_shutdown():
     """Test that py::cast works during interpreter shutdown.

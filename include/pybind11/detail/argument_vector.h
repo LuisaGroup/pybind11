@@ -54,6 +54,25 @@ union inline_array_or_vector {
         bool is_inline = true;
         std::uint32_t size = 0;
         std::array<ArrayT, InlineSize> arr;
+
+        inline_array() = default;
+        inline_array(const inline_array &) = default;
+        inline_array &operator=(const inline_array &) = default;
+        ~inline_array() = default;
+
+        // Moving leaves the source empty, to match std::vector and so that
+        // owning users (e.g. ref_small_vector) do not release twice.
+        inline_array(inline_array &&rhs) noexcept : size(rhs.size), arr(std::move(rhs.arr)) {
+            rhs.size = 0;
+        }
+        inline_array &operator=(inline_array &&rhs) noexcept {
+            if (this != &rhs) {
+                size = rhs.size;
+                arr = std::move(rhs.arr);
+                rhs.size = 0;
+            }
+            return *this;
+        }
     };
     struct heap_vector {
         bool is_inline = false;
@@ -80,6 +99,8 @@ union inline_array_or_vector {
     inline_array_or_vector(const inline_array_or_vector &) = delete;
     inline_array_or_vector &operator=(const inline_array_or_vector &) = delete;
 
+    // Both branches leave rhs empty: inline_array does so explicitly, and the
+    // std::vector move constructor is guaranteed to.
     inline_array_or_vector(inline_array_or_vector &&rhs) noexcept {
         if (rhs.is_inline()) {
             new (&iarray) inline_array(std::move(rhs.iarray));
@@ -232,7 +253,10 @@ public:
 
     small_vector(std::size_t count, bool value) {
         if (count > kInlineSize) {
-            new (&m_repr.hvector) typename repr_type::heap_vector(count, value);
+            // Build first: a throwing constructor must not leave the heap tag set.
+            using heap_vector = typename repr_type::heap_vector;
+            heap_vector hv(count, value);
+            new (&m_repr.hvector) heap_vector(std::move(hv));
         } else {
             auto &inline_arr = m_repr.iarray;
             inline_arr.arr.fill(value ? static_cast<std::size_t>(-1) : 0);
@@ -291,7 +315,7 @@ public:
     void set(std::size_t idx, bool value = true) {
         if (is_inline()) {
             auto &ha = m_repr.iarray;
-            assert(ha.size < kInlineSize);
+            assert(idx < ha.size);
             const auto wbi = word_and_bit_index(idx);
             assert(wbi.word < kWords);
             assert(wbi.bit < kBitsPerWord);
@@ -374,9 +398,8 @@ public:
     ref_small_vector &operator=(const ref_small_vector &) = delete;
 
     // Move is allowed
-    ref_small_vector(ref_small_vector &&other) noexcept : m_ptrs(std::move(other.m_ptrs)) {
-        // other.m_ptrs is now empty, so its destructor won't decref anything
-    }
+    // small_vector leaves the source empty, so other's destructor decrefs nothing.
+    ref_small_vector(ref_small_vector &&other) noexcept : m_ptrs(std::move(other.m_ptrs)) {}
 
     ref_small_vector &operator=(ref_small_vector &&other) noexcept {
         if (this != &other) {

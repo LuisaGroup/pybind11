@@ -11,6 +11,8 @@
 
 #include "pybind11_tests.h"
 
+#include <set>
+
 struct ConstRefCasted {
     int tag;
 };
@@ -235,6 +237,8 @@ TEST_SUBMODULE(builtin_casters, m) {
     // test_int_convert
     m.def("int_passthrough", [](int arg) { return arg; });
     m.def("int_passthrough_noconvert", [](int arg) { return arg; }, py::arg{}.noconvert());
+    m.def("uint_passthrough", [](unsigned arg) { return arg; });
+    m.def("uint_passthrough_noconvert", [](unsigned arg) { return arg; }, py::arg{}.noconvert());
 
     // test_float_convert
     m.def("float_passthrough", [](float arg) { return arg; });
@@ -254,6 +258,23 @@ TEST_SUBMODULE(builtin_casters, m) {
         },
         "Return a triple in reversed order");
     m.def("empty_tuple", []() { return std::tuple<>(); });
+
+    // test_tuple_items_created_on_the_fly
+    // The copy constructor records if the source instance was alive.
+    struct TupleItem {
+        explicit TupleItem(int) { alive().insert(this); }
+        TupleItem(const TupleItem &other) : source_was_alive{alive().count(&other) != 0} {}
+        ~TupleItem() { alive().erase(this); }
+        static std::set<const TupleItem *> &alive() {
+            static std::set<const TupleItem *> instances;
+            return instances;
+        }
+        bool source_was_alive = true;
+    };
+    py::class_<TupleItem>(m, "TupleItem").def(py::init<int>());
+    m.def("pair_item_sources_were_alive", [](const std::pair<TupleItem, TupleItem> &input) {
+        return std::make_pair(input.first.source_was_alive, input.second.source_was_alive);
+    });
     static std::pair<RValueCaster, RValueCaster> lvpair;
     static std::tuple<RValueCaster, RValueCaster, RValueCaster> lvtuple;
     static std::pair<RValueCaster, std::tuple<RValueCaster, std::pair<RValueCaster, RValueCaster>>>
@@ -363,8 +384,33 @@ TEST_SUBMODULE(builtin_casters, m) {
     m.def("complex_cast", [](float x) { return "{}"_s.format(x); });
     m.def("complex_cast",
           [](std::complex<float> x) { return "({}, {})"_s.format(x.real(), x.imag()); });
+    m.def(
+        "complex_cast_strict",
+        [](std::complex<float> x) { return "({}, {})"_s.format(x.real(), x.imag()); },
+        py::arg{}.noconvert());
+
     m.def("complex_convert", [](std::complex<float> x) { return x; });
     m.def("complex_noconvert", [](std::complex<float> x) { return x; }, py::arg{}.noconvert());
+
+    // test_overload_resolution_float_int
+    // Test that float overload registered before int overload gets selected when passing int
+    // This documents the breaking change: int can now match float in strict mode
+    m.def("overload_resolution_test", [](float x) { return "float: " + std::to_string(x); });
+    m.def("overload_resolution_test", [](int x) { return "int: " + std::to_string(x); });
+
+    // Test with noconvert (strict mode) - this is the key breaking change
+    m.def(
+        "overload_resolution_strict",
+        [](float x) { return "float_strict: " + std::to_string(x); },
+        py::arg{}.noconvert());
+    m.def("overload_resolution_strict", [](int x) { return "int_strict: " + std::to_string(x); });
+
+    // Test complex overload resolution: complex registered before float/int
+    m.def("overload_resolution_complex", [](std::complex<float> x) {
+        return "complex: (" + std::to_string(x.real()) + ", " + std::to_string(x.imag()) + ")";
+    });
+    m.def("overload_resolution_complex", [](float x) { return "float: " + std::to_string(x); });
+    m.def("overload_resolution_complex", [](int x) { return "int: " + std::to_string(x); });
 
     // test int vs. long (Python 2)
     m.def("int_cast", []() { return 42; });

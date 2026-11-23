@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import contextlib
 import sys
 import types
@@ -7,7 +8,6 @@ import types
 import pytest
 
 import env
-from pybind11_tests import detailed_error_messages_enabled
 from pybind11_tests import pytypes as m
 
 
@@ -28,6 +28,28 @@ def test_bool(doc):
 
 def test_int(doc):
     assert doc(m.get_int) == "get_int() -> int"
+
+
+@pytest.mark.parametrize(
+    ("func", "lo", "hi"),
+    [
+        (m.int_to_int, -(2**31), 2**31 - 1),
+        (m.int_to_long_long, -(2**63), 2**63 - 1),
+        (m.int_to_unsigned, 0, 2**32 - 1),
+        (m.int_to_unsigned_long_long, 0, 2**64 - 1),
+    ],
+)
+def test_int_conversion_overflow(func, lo, hi):
+    assert func(lo) == lo
+    assert func(hi) == hi
+    for value in (lo - 1, hi + 1, 2**100, -(2**100)):
+        with pytest.raises(OverflowError):
+            func(value)
+
+
+@pytest.mark.parametrize("value", [0, 1, -1, 2**64 - 1, 2**100, -(2**100)])
+def test_int_conversion_bool(value):
+    assert m.int_to_bool(value) is bool(value)
 
 
 def test_iterator(doc):
@@ -108,6 +130,26 @@ def test_none(doc):
     assert doc(m.print_none) == "print_none(arg0: None) -> None"
 
 
+def test_object_contains():
+    class OnlyIter:
+        def __iter__(self):
+            return iter([1, 2])
+
+    class RaisingContains:
+        def __contains__(self, item):
+            raise ValueError("contains failed")
+
+    assert m.object_contains([1, 2], 1) is True
+    assert m.object_contains([1, 2], 3) is False
+    # The `in` operator falls back to iteration when there is no __contains__.
+    assert m.object_contains(OnlyIter(), 2) is True
+    assert m.object_contains(OnlyIter(), 3) is False
+    with pytest.raises(ValueError, match="contains failed"):
+        m.object_contains(RaisingContains(), 1)
+    with pytest.raises(TypeError):
+        m.object_contains(object(), 1)
+
+
 def test_set(capture, doc):
     s = m.get_set()
     assert isinstance(s, set)
@@ -183,6 +225,15 @@ def test_dict(capture, doc):
     assert not m.dict_contains({}, 42)
     assert m.dict_contains({42: None}, 42)
     assert m.dict_contains({"foo": None}, "foo")
+
+    assert m.dict_get({42: "x"}, 42) == "x"
+    assert m.dict_get({}, 42) is None
+    assert m.dict_get({42: None}, 42, "default") is None
+    assert m.dict_get({}, 42, "default") == "default"
+    assert m.dict_get_cast({"foo": "bar"}) == "bar"
+    assert m.dict_get_cast({}) == 42
+    with pytest.raises(TypeError, match="unhashable"):
+        m.dict_get({}, [])
 
     assert doc(m.get_dict) == "get_dict() -> dict"
     assert doc(m.print_dict) == "print_dict(arg0: dict) -> None"
@@ -545,29 +596,73 @@ def test_implicit_casting():
     assert z["l"] == [3, 6, 9, 12, 15]
 
 
-def test_print(capture):
-    with capture:
-        m.print_function()
-    assert (
-        capture
-        == """
-        Hello, World!
-        1 2.0 three True -- multiple args
-        *args-and-a-custom-separator
-        no new line here -- next print
-        flush
-        py::print + str.format = this
-    """
-    )
-    assert capture.stderr == "this goes to stderr"
+def test_print_delegates_to_current_builtin(monkeypatch):
+    calls = []
 
-    with pytest.raises(RuntimeError) as excinfo:
-        m.print_failure()
-    assert str(excinfo.value) == "Unable to convert call argument " + (
-        "'1' of type 'UnregisteredType' to Python object"
-        if detailed_error_messages_enabled
-        else "'1' to Python object (#define PYBIND11_DETAILED_ERROR_MESSAGES or compile in debug mode for details)"
-    )
+    def first_print(*args, **kwargs):
+        calls.append(("first", args, kwargs))
+        return object()
+
+    def second_print(*args, **kwargs):
+        calls.append(("second", args, kwargs))
+        return object()
+
+    positional = [object(), object()]
+    keywords = {"first": object(), "second": object()}
+
+    monkeypatch.setattr(builtins, "print", first_print)
+    assert m.print_args(*positional, **keywords) is None
+
+    monkeypatch.setattr(builtins, "print", second_print)
+    assert m.print_args() is None
+
+    assert calls[0][0] == "first"
+    assert len(calls[0][1]) == len(positional)
+    assert all(actual is expected for actual, expected in zip(calls[0][1], positional))
+    assert list(calls[0][2]) == list(keywords)
+    assert all(calls[0][2][key] is value for key, value in keywords.items())
+    assert calls[1] == ("second", (), {})
+
+
+def test_print_missing_from_current_builtins_is_silent(monkeypatch):
+    # The builtins dictionary may have lost its print entry before C++ destructors
+    # run during interpreter shutdown.
+    with monkeypatch.context() as context:
+        context.delattr(builtins, "print")
+        result = m.print_args("ignored")
+    assert result is None
+
+
+def test_print_stdout_none_matches_current_builtin(monkeypatch):
+    def exception_type(func):
+        try:
+            func("text")
+        except Exception as exc:
+            return type(exc)
+        return None
+
+    # Python runtimes differ here; py::print should follow the active runtime.
+    with monkeypatch.context() as context:
+        context.setattr(sys, "stdout", None)
+        native_exception_type = exception_type(builtins.print)
+        pybind_exception_type = exception_type(m.print_args)
+
+    assert pybind_exception_type is native_exception_type
+
+
+def test_print_propagates_current_builtin_exception(monkeypatch):
+    class MarkerError(Exception):
+        pass
+
+    error = MarkerError()
+
+    def failing_print():
+        raise error
+
+    monkeypatch.setattr(builtins, "print", failing_print)
+    with pytest.raises(MarkerError) as exc_info:
+        m.print_args()
+    assert exc_info.value is error
 
 
 def test_hash():
@@ -641,6 +736,7 @@ def test_memoryview(method, args, fmt, expected_view):
 
 
 @pytest.mark.xfail("env.PYPY", reason="getrefcount is not available")
+@pytest.mark.skipif("env.GRAALPY", reason="Different refcounting mechanism")
 @pytest.mark.parametrize(
     "method",
     [
@@ -791,6 +887,49 @@ def test_cpp_iterators():
     assert m.tuple_iterator() == 12
     assert m.dict_iterator() == 305 + 711
     assert m.passed_iterator(iter((-7, 3))) == -4
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt, SystemExit])
+def test_capi_sequence_end_error(error_type):
+    error = error_type("sequence length failed")
+
+    class BadLength:
+        def __getitem__(self, index):
+            raise AssertionError("end must not retrieve items")
+
+        def __len__(self):
+            raise error
+
+    with pytest.raises(error_type) as excinfo:
+        m.capi_sequence_end(BadLength())
+    assert excinfo.value is error
+    assert "__len__" in [entry.name for entry in excinfo.traceback]
+
+
+def test_capi_sequence_end_negative_length():
+    class NegativeLength:
+        def __getitem__(self, index):
+            raise AssertionError("end must not retrieve items")
+
+        def __len__(self):
+            return -1  # noqa: PLE0303 - deliberately invalid length
+
+    with pytest.raises(ValueError):
+        m.capi_sequence_end(NegativeLength())
+
+
+@pytest.mark.parametrize("values", [[], [4, 7]])
+@pytest.mark.parametrize("kind", [list, tuple, "custom"])
+def test_capi_sequence_end_valid(values, kind):
+    class CustomSequence:
+        def __getitem__(self, index):
+            return values[index]
+
+        def __len__(self):
+            return len(values)
+
+    sequence = CustomSequence() if kind == "custom" else kind(values)
+    assert m.capi_sequence_end(sequence) == len(values)
 
 
 def test_implementation_details():
@@ -976,14 +1115,14 @@ def test_iterator_annotations(doc):
 def test_fn_annotations(doc):
     assert (
         doc(m.annotate_fn)
-        == "annotate_fn(arg0: collections.abc.Callable[[list[str], str], int]) -> None"
+        == "annotate_fn(arg0: collections.abc.Callable[[list[str], str], typing.SupportsInt | typing.SupportsIndex]) -> None"
     )
 
 
 def test_fn_return_only(doc):
     assert (
         doc(m.annotate_fn_only_return)
-        == "annotate_fn_only_return(arg0: collections.abc.Callable[..., int]) -> None"
+        == "annotate_fn_only_return(arg0: collections.abc.Callable[..., typing.SupportsInt | typing.SupportsIndex]) -> None"
     )
 
 
@@ -1085,7 +1224,7 @@ def test_literal(doc):
     )
     assert (
         doc(m.identity_literal_arrow_with_callable)
-        == 'identity_literal_arrow_with_callable(arg0: collections.abc.Callable[[typing.Literal["->"], float | int], float]) -> collections.abc.Callable[[typing.Literal["->"], float | int], float]'
+        == 'identity_literal_arrow_with_callable(arg0: collections.abc.Callable[[typing.Literal["->"], float], float | int]) -> collections.abc.Callable[[typing.Literal["->"], float | int], float]'
     )
     assert (
         doc(m.identity_literal_all_special_chars)
@@ -1325,27 +1464,27 @@ def test_arg_return_type_hints(doc, backport_typehints):
     # Callable<R(A)> identity
     assert (
         doc(m.identity_callable)
-        == "identity_callable(arg0: collections.abc.Callable[[float | int], float]) -> collections.abc.Callable[[float | int], float]"
+        == "identity_callable(arg0: collections.abc.Callable[[float], float | int]) -> collections.abc.Callable[[float | int], float]"
     )
     # Callable<R(...)> identity
     assert (
         doc(m.identity_callable_ellipsis)
-        == "identity_callable_ellipsis(arg0: collections.abc.Callable[..., float]) -> collections.abc.Callable[..., float]"
+        == "identity_callable_ellipsis(arg0: collections.abc.Callable[..., float | int]) -> collections.abc.Callable[..., float]"
     )
     # Nested Callable<R(A)> identity
     assert (
         doc(m.identity_nested_callable)
-        == "identity_nested_callable(arg0: collections.abc.Callable[[collections.abc.Callable[[float | int], float]], collections.abc.Callable[[float | int], float]]) -> collections.abc.Callable[[collections.abc.Callable[[float | int], float]], collections.abc.Callable[[float | int], float]]"
+        == "identity_nested_callable(arg0: collections.abc.Callable[[collections.abc.Callable[[float | int], float]], collections.abc.Callable[[float], float | int]]) -> collections.abc.Callable[[collections.abc.Callable[[float], float | int]], collections.abc.Callable[[float | int], float]]"
     )
     # Callable<R(A)>
     assert (
         doc(m.apply_callable)
-        == "apply_callable(arg0: float | int, arg1: collections.abc.Callable[[float | int], float]) -> float"
+        == "apply_callable(arg0: float | int, arg1: collections.abc.Callable[[float], float | int]) -> float"
     )
     # Callable<R(...)>
     assert (
         doc(m.apply_callable_ellipsis)
-        == "apply_callable_ellipsis(arg0: float | int, arg1: collections.abc.Callable[..., float]) -> float"
+        == "apply_callable_ellipsis(arg0: float | int, arg1: collections.abc.Callable[..., float | int]) -> float"
     )
     # Union<T1, T2>
     assert (
